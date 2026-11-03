@@ -154,7 +154,7 @@ RDO 导入同样默认跳过本机及当前文件内的重复服务器。使用 
 - WebDAV 填写**服务器地址、账号和密码 / 应用密码**（如 `https://dav.example.com/dav/`），默认保存为该地址下的 `OmniDesk.odbackup`；「备份位置与高级设置（可选）」可设置相对目录和文件名，上传时自动创建备份子目录。旧版完整文件地址会保留原备份位置；测试或上传时自动保存表单，无需先点保存；手动上传，另一台设备手动下载并导入
 - 当前是**手动同步**，不是后台定时双向同步；文件采用 AES-256-GCM + scrypt 加密，可将备份密码记住在本机加密保险箱，后续留空即可使用，也可主动忘记；新设备仍需原密码；它与 WebDAV 服务器密码不同
 - 默认要求可信 HTTPS；HTTP 须显式接受账号密码暴露风险。不跟随重定向，不忽略 WebDAV 证书错误；有强 ETag 时使用条件请求阻止冲突覆盖；无强 ETag 时明确提示后允许覆盖，兼容不支持 HEAD 的服务器
-- 错密码、篡改和取消均不修改本地；导入和 WebDAV 凭据保存带多文件事务恢复。本轮功能验证见 `docs/VALIDATION-0.1.6.md`；此前 WebDAV 表单与兼容验证见 `docs/VALIDATION-0.1.5.md`，RDP / SSH 修复及实测范围见 `docs/VALIDATION-0.1.4.md`，配置同步详细验证见 `docs/VALIDATION-0.1.3.md`
+- 错密码、篡改和取消均不修改本地；导入和 WebDAV 凭据保存带多文件事务恢复。本版验证范围见 [0.6.15 验证记录](docs/VALIDATION-0.6.15.md)
 
 ### 开放能力（这是重点）
 - **MCP Server** —— AI 客户端（Claude Code / Cursor 等）可直接操作你的服务器
@@ -301,7 +301,7 @@ curl -N -H "Authorization: Bearer $TOKEN" http://127.0.0.1:3928/api/v1/hosts/<id
 
 ```
 omnidesk/
-├── docs/PLAN.md              功能范围与技术方案
+├── docs/BUILDING.md          环境、构建与验证入口
 ├── src/
 │   ├── shared/               主/渲染共享（类型、IPC 契约、常量）
 │   ├── main/
