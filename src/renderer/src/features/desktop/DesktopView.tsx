@@ -65,6 +65,14 @@ export default function DesktopView({ tab, active = true }: { tab: Tab; active?:
   const connections = useApp((s) => s.connections)
   const connection = connections.find((c) => c.id === tab.connectionId)
 
+  useEffect(() => {
+    if (fileTransfer?.state !== 'complete') return
+    const timeout = window.setTimeout(() => {
+      setFileTransfer(current => current === fileTransfer ? null : current)
+    }, 3000)
+    return () => window.clearTimeout(timeout)
+  }, [fileTransfer])
+
   /* ---------------- 建立会话 ---------------- */
   useEffect(() => {
     if (!tab.connectionId || !canvasRef.current) return
