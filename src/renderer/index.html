@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      CSP 说明：
+        script-src 必须含 'wasm-unsafe-eval' —— WebAssembly 编译属于「动态代码执行」，
+        默认会被 CSP 拦下。RDP 的协议栈是 Rust 编译的 WASM，缺这一项会卡在
+        「正在加载 RDP 协议栈」永远不动，而且不报错。
+        connect-src 需要 file: —— 应用以 file:// 加载，WASM 文件要经 fetch 取回。
+        这两条都是精确放行，不等于放宽整体策略。
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' file: ws://127.0.0.1:* ws://localhost:*"
+    />
+    <title>OmniDesk</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,129 @@
+{
+  "name": "omnidesk",
+  "version": "0.6.15",
+  "description": "远程控制工作台 —— 连接 Windows / Linux，并对 AI 与外部系统开放能力",
+  "main": "./out/main/index.js",
+  "author": "OmniDesk",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "build:freerdp": "node tools/build-freerdp.cjs",
+    "dev": "electron-vite dev",
+    "build": "node tools/verify-rdp-runtime.cjs && electron-vite build",
+    "start": "electron-vite preview",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build:freerdp && npm run build && electron-builder --win",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-search": "^0.15.0",
+    "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/xterm": "^5.5.0",
+    "express": "^4.21.2",
+    "guacamole-common-js": "1.5.0",
+    "ssh2": "^1.16.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.17",
+    "@types/react-dom": "^18.3.5",
+    "@types/ssh2": "^1.15.1",
+    "@types/ws": "^8.5.13",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^44.7.2",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^2.3.0",
+    "ironrdp-wasm": "1.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "tabby-rdp": "0.5.6",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11",
+    "zustand": "^5.0.2"
+  },
+  "build": {
+    "beforePack": "./tools/verify-freerdp-package.cjs",
+    "appId": "cn.omnidesk.app",
+    "productName": "OmniDesk",
+    "publish": {
+      "provider": "github",
+      "owner": "jixn-hu",
+      "repo": "omnidesk-releases",
+      "releaseType": "draft"
+    },
+    "directories": {
+      "output": "release/${version}",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/main/**/*",
+      "out/preload/**/*",
+      "out/renderer/**/*",
+      "!out/**/*.map",
+      "package.json",
+      "!node_modules/cpu-features/**",
+      "!node_modules/nan/**"
+    ],
+    "extraResources": [
+      {
+        "from": "out/native-freerdp",
+        "to": "freerdp",
+        "filter": [
+          "*.exe",
+          "*.dll",
+          "manifest.json",
+          "licenses/**/*"
+        ]
+      },
+      {
+        "from": "node_modules/tabby-rdp/vendor/IRONRDP-LICENSE",
+        "to": "licenses/IronRDP-LICENSE"
+      },
+      {
+        "from": "node_modules/tabby-rdp/LICENSE",
+        "to": "licenses/Tabby-RDP-LICENSE"
+      },
+      {
+        "from": "node_modules/guacamole-common-js/LICENSE",
+        "to": "licenses/Guacamole-LICENSE"
+      }
+    ],
+    "asar": true,
+    "asarUnpack": [],
+    "npmRebuild": false,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "OmniDesk",
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-win-${arch}-portable.${ext}"
+    }
+  }
+}

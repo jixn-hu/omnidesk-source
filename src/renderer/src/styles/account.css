@@ -1,0 +1,131 @@
+.account-workspace { height: 100%; overflow: auto; padding: 32px; max-width: 1400px; margin: 0 auto; width: 100%; }
+.account-heading, .account-section-title { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; margin-bottom: 24px; }
+.account-heading h1 { margin: 9px 0 10px; font-size: 24px; letter-spacing: -.04em; }
+.account-heading p, .account-section-title p { color: var(--text-secondary); font-size: 12px; line-height: 1.8; margin: 6px 0 0; }
+.account-mode { display: flex; gap: 12px; align-items: center; border-left: 2px solid var(--accent); padding: 8px 0 8px 16px; font-size: 13px; }
+.account-mode svg { color: var(--accent); }
+.account-identity { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
+.account-identity > div { min-width: 0; flex: 1; max-width: 620px; }
+.account-identity .account-gitlab { padding: 0; }
+.account-identity .account-gitlab-linked { margin-bottom: 0; }
+.account-copy-warning { padding: 12px 14px; border-left: 2px solid var(--warning); background: color-mix(in srgb, var(--warning) 6%, transparent); }
+.account-sync > summary, .account-admin-tools > summary { display: flex; align-items: center; gap: 10px; font-size: 12px; cursor: pointer; color: var(--text-secondary); }
+.account-sync > summary > span, .account-admin-tools > summary > span { margin-left: auto; font-size: 11px; color: var(--text-tertiary); }
+.account-sync[open] > summary { margin-bottom: 20px; }
+.account-admin-tools { margin-top: 20px; }
+.account-mode small { display: block; color: var(--text-secondary); margin-top: 5px; font-size: 11px; }
+.account-workspace .card { padding: 24px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-elevated); }
+.account-workspace .account-service { padding: 14px 20px; margin-bottom: 22px; }
+.account-service summary { cursor: pointer; font-size: 12px; color: var(--text-secondary); }
+.account-service summary .mono { margin-left: 14px; font-size: 11px; overflow-wrap: anywhere; }
+.account-service-form { display: flex; align-items: flex-end; gap: 12px; margin-top: 16px; }
+.account-service-form .field { flex: 1; margin: 0; }
+.account-service .field-hint { margin: 10px 0 2px; }
+.account-login-grid { display: grid; grid-template-columns: minmax(300px, 440px) 1fr; gap: 48px; align-items: center; }
+.account-login .segmented { margin-bottom: 22px; }
+.account-login form > .btn { width: 100%; justify-content: space-between; margin-top: 4px; }
+.account-gitlab { padding: 18px 0 12px; }
+.account-login .account-gitlab { margin-top: 20px; border-top: 1px solid var(--border); padding-bottom: 0; }
+.account-gitlab-button { width: 100%; justify-content: flex-start; gap: 12px; border-color: var(--border); }
+.account-gitlab-button > svg:first-child, .account-gitlab-linked > svg, .account-gitlab-wait > svg { color: #e88a37; }
+.account-gitlab-button > svg:last-child { margin-left: auto; }
+.account-gitlab-wait { display: flex; align-items: center; gap: 14px; padding: 16px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-elevated); }
+.account-gitlab-wait > div { flex: 1; }
+.account-gitlab-wait strong { font-size: 13px; }
+.account-gitlab-wait p { margin: 6px 0 0; color: var(--text-secondary); font-size: 12px; }
+.account-gitlab-linked { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 12px; margin: 0 0 20px; }
+.account-setting-toggle { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px 0; }
+.account-setting-toggle strong { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.account-setting-toggle p { font-size: 12px; line-height: 1.8; color: var(--text-secondary); margin: 6px 0 0; }
+.account-setting-toggle input { appearance: none; flex: 0 0 auto; width: 36px; height: 20px; padding: 0; border-radius: 20px; position: relative; background: var(--bg); cursor: pointer; }
+.account-setting-toggle input::before { content: ''; position: absolute; width: 14px; height: 14px; border-radius: 50%; left: 2px; top: 2px; background: var(--text-tertiary); transition: transform var(--transition); }
+.account-setting-toggle input:checked { background: var(--accent); border-color: var(--accent); }
+.account-setting-toggle input:checked::before { transform: translateX(16px); background: white; }
+.account-setting-toggle input:disabled { opacity: .5; cursor: wait; }
+.account-gitlab-settings { border-top: 1px solid var(--border); margin-bottom: 20px; }
+.account-settings-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 20px; }
+.account-settings-fields input { width: 100%; }
+.account-batch { margin: 0 0 24px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-elevated); }
+.account-batch > summary { display: flex; align-items: center; gap: 10px; padding: 18px 20px; font-size: 13px; cursor: pointer; }
+.account-batch > summary > span { margin-left: auto; color: var(--text-tertiary); font-size: 11px; }
+.account-batch[open] > summary { border-bottom: 1px solid var(--border); }
+.account-batch-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; padding: 20px; }
+.account-batch-columns h3 { font-size: 14px; margin: 0 0 16px; }
+.account-batch-list { max-height: 270px; overflow: auto; border-block: 1px solid var(--border); margin-bottom: 14px; }
+.account-batch-list > label { display: flex; gap: 12px; align-items: flex-start; padding: 12px 4px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.account-batch-list > label > input { flex: 0 0 16px; width: 16px; height: 16px; padding: 0; margin: 2px 0 0; accent-color: var(--accent); }
+.account-batch-list > label > div { min-width: 0; flex: 1; }
+.account-batch-list strong { display: flex; align-items: center; gap: 10px; font-size: 12px; overflow-wrap: anywhere; }
+.account-batch-list small { color: var(--text-tertiary); font-size: 10px; font-weight: 400; }
+.account-batch-list span, .account-batch-list p { display: block; color: var(--text-secondary); font-size: 11px; overflow-wrap: anywhere; margin: 5px 0 0; }
+.account-batch-tools { display: flex; align-items: center; gap: 14px; margin: 12px 0; font-size: 11px; }
+.account-batch-tools > span { margin-left: auto; color: var(--text-secondary); }
+.account-batch > .alert { margin: 0 20px 20px; }
+.account-batch .alert ul { margin-bottom: 0; max-height: 180px; overflow: auto; }
+.account-workspace .search-input { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
+.account-workspace .search-input > svg { flex-shrink: 0; color: var(--text-tertiary); }
+.account-workspace .search-input > input { min-width: 0; border: 0; box-shadow: none; background: transparent; padding-inline: 0; }
+.account-workspace .search-input:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
+@media (max-width: 1050px) { .account-settings-fields, .account-batch-columns { grid-template-columns: 1fr; } .account-batch > summary { flex-wrap: wrap; } .account-batch > summary > span { margin-left: 0; } }
+.account-local-note { max-width: 440px; color: var(--text-secondary); padding: 24px 0; }
+.account-local-note > svg { color: var(--accent); margin-bottom: 16px; }
+.account-local-note h2 { color: var(--text); font-size: 22px; margin: 0 0 16px; letter-spacing: -.02em; }
+.account-local-note p { font-size: 13px; line-height: 2; }
+.account-sync { margin-bottom: 24px; }
+.account-admin { margin-top: 24px; }
+.account-admin-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 22px; }
+.account-admin-summary > div { padding: 16px; background: var(--accent-subtle); border: 1px solid var(--border); border-radius: 6px; }
+.account-admin-summary span { display: block; color: var(--text-secondary); font-size: 11px; }
+.account-admin-summary strong { display: block; margin-top: 9px; font-size: 26px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.account-admin-table { overflow-x: auto; }
+.account-admin-table table { min-width: 650px; }
+.account-admin-table td { vertical-align: top; font-size: 12px; }
+.account-admin-table td small, .account-admin-table td > .mono { display: block; color: var(--text-tertiary); margin-top: 6px; font-size: 10px; }
+.account-section-title h2 { display: flex; align-items: center; gap: 10px; font-size: 17px; margin: 0; }
+.account-section-title h2 svg { color: var(--accent); }
+.account-sync-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 24px 0 14px; }
+.account-sync-actions > div { display: flex; flex-direction: column; gap: 6px; margin-right: auto; }
+.account-sync-actions strong { font-size: 25px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.account-sync-actions small { color: var(--text-tertiary); font-size: 11px; }
+.account-publish { padding: 16px; background: var(--accent-subtle); border: 1px solid var(--border); border-radius: 6px; display: flex; gap: 12px; align-items: flex-end; margin: 22px 0; }
+.account-publish .field { flex: 1; min-width: 0; margin: 0; }
+.account-publish select { width: 100%; }
+.account-share-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.account-share-toolbar .search-input { flex: 1; }
+.account-shared-list { border-top: 1px solid var(--border); }
+.account-shared-item { display: flex; gap: 14px; align-items: flex-start; padding: 20px 0; border-bottom: 1px solid var(--border); }
+.account-shared-item > .conn-item-badge { margin-top: 2px; }
+.account-shared-main { flex: 1; min-width: 0; }
+.account-shared-main > strong { display: flex; gap: 10px; align-items: center; font-size: 14px; overflow-wrap: anywhere; }
+.account-shared-main > div { margin-top: 7px; font-size: 11px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.account-shared-main > p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.7; margin: 9px 0; }
+.account-shared-main > small { font-size: 10px; color: var(--text-tertiary); }
+.account-shared-actions { display: flex; flex-direction: column; gap: 8px; }
+.account-share-empty { padding: 40px 16px; font-size: 12px; color: var(--text-secondary); text-align: center; }
+.account-remote-workspace { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.account-remote-toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 11px; flex-wrap: wrap; background: var(--bg-elevated); }
+.account-remote-toolbar strong { font-size: 12px; }
+.account-remote-toolbar > .muted { margin-right: auto; }
+.account-remote-surface { flex: 1; min-height: 0; position: relative; background: #111a21; }
+.account-remote-display { position: absolute; inset: 0; overflow: auto; }
+.account-remote-display > div { outline: none; }
+.account-remote-display:focus-within { outline: 1px solid var(--accent); outline-offset: -1px; }
+.account-remote-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px; background: var(--bg); padding: 32px; text-align: center; }
+.account-remote-overlay svg { color: var(--accent); }
+.account-remote-overlay h2 { margin: 0; font-size: 20px; }
+.account-remote-overlay p { max-width: 540px; color: var(--text-secondary); white-space: pre-wrap; line-height: 1.8; font-size: 12px; margin: 0; }
+.account-remote-clipboard { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.account-remote-clipboard textarea { max-height: 140px; resize: vertical; }
+.account-remote-clipboard .field { margin-bottom: 8px; }
+.account-remote-clipboard > span { margin-left: 12px; }
+@media (max-width: 950px) { .account-workspace { padding: 22px; } .account-login-grid { grid-template-columns: 1fr; gap: 0; } .account-local-note { max-width: none; } .account-heading { flex-wrap: wrap; } .account-mode { font-size: 12px; } .account-publish, .account-service-form { flex-wrap: wrap; } .account-publish .field { flex-basis: 100%; } }
+
+.shared-heading-actions { display:flex; align-items:center; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+.account-sharing-link { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-bottom:20px; }
+.account-sharing-link h2 { font-size:15px; margin:0; }
+.personal-sharing { margin-top:20px; }
+.personal-sharing > summary { display:flex; align-items:center; gap:16px; cursor:pointer; font-size:13px; }
+.personal-sharing > summary > span { margin-left:auto; color:var(--text-tertiary); font-size:11px; }
+@media(max-width:900px) { .shared-servers-workspace .account-heading, .account-sharing-link { flex-direction:column; } .shared-heading-actions { justify-content:flex-start; } }
+
+.sidebar-manager.shared-servers-entry { justify-content:flex-start; gap:8px; }

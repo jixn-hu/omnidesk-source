@@ -1,0 +1,256 @@
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
+const net = require('node:net')
+const { spawn, execFileSync } = require('node:child_process')
+const { once } = require('node:events')
+const { WebSocket } = require('ws')
+const esbuild = require('esbuild')
+const root = path.resolve(__dirname, '..')
+const directory = fs.mkdtempSync(path.join(root, 'tmp/freerdp-qa-'))
+const sdk = path.join(root, 'tmp/freerdp-sdk')
+const msys = process.env.OMNIDESK_MSYS2 || 'C:/msys64/ucrt64'
+const libraries = path.join(root, 'out/native-freerdp')
+const environment = { ...process.env, PATH: `${libraries};${msys}/bin;${process.env.PATH}`, OPENSSL_MODULES: libraries, WLOG_LEVEL: 'OFF' }
+const bundle = (source, name) => {
+  const outfile = path.join(directory, name + '.cjs')
+  esbuild.buildSync({ entryPoints: [source], outfile, bundle: true, format: 'cjs', platform: 'node', packages: 'external', alias: { '@shared': path.join(root, 'src/shared') } })
+  return require(outfile)
+}
+const { nativeNumbers, nativeCommand, nativeFrame, NativePacketDecoder, FREERDP_MAX_PACKET } = bundle('src/shared/freerdp-protocol.ts', 'protocol')
+const { FreeRdpService } = bundle('src/main/services/freerdp.ts', 'service')
+const { RdpCertificateVerifier } = bundle('src/main/services/rdp-certificates.ts', 'certificates')
+const { sharedConfiguration } = bundle('src/shared/shared-configuration.ts', 'shared')
+const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
+async function until(predicate, label, milliseconds = 20000) {
+  const end = Date.now() + milliseconds
+  while (!predicate()) { if (Date.now() > end) throw new Error('等待超时：' + label); await pause(25) }
+}
+function peer(legacy = false, nla = false, basicPointer = false) {
+  const child = spawn(path.join(directory, 'test-peer.exe'), [path.join(directory, 'cert.pem'), path.join(directory, 'key.pem'), nla ? '2' : legacy ? '1' : '0', path.join(directory, 'sam')], { env: { ...environment, ...(basicPointer ? { OMNIDESK_QA_BASIC_POINTER: '1' } : {}) }, windowsHide: true })
+  child.lines = ''
+  child.errors = ''
+  child.stdout.on('data', chunk => { child.lines += chunk.toString() })
+  child.stderr.on('data', chunk => { child.errors += chunk.toString() })
+  return child
+}
+async function connect(service, port, options = {}, password = 'synthetic-not-a-real-password') {
+  const transport = await service.prepare('127.0.0.1', port, { username: 'qa-local-only', password, domain: '' }, { engine: 'freerdp', ...options })
+  const socket = new WebSocket(transport.wsUrl)
+  const packets = []
+  socket.on('message', data => packets.push(Buffer.from(data)))
+  await once(socket, 'open')
+  socket.send(nativeCommand(3, nativeNumbers(800, 600, 100)))
+  return { transport, socket, packets }
+}
+
+async function main() {
+  const sample = nativeFrame(nativeCommand(2, nativeNumbers(1, 1, 30, 0)))
+  const packets = []
+  const decoder = new NativePacketDecoder(packet => packets.push(packet))
+  for (const byte of sample) decoder.push(Uint8Array.of(byte))
+  decoder.push(new Uint8Array([...sample, ...sample]))
+  assert.equal(packets.length, 3)
+  assert.deepEqual(packets[0], sample.subarray(4))
+  for (const length of [0, FREERDP_MAX_PACKET + 1, 0xffffffff]) assert.throws(() => new NativePacketDecoder(() => {}).push(nativeNumbers(length)))
+  console.log('PASS binary protocol fragmentation, coalescing and oversized packets')
+  const shared = { kind: 'rdp', name: 'QA', host: '192.0.2.1', port: 3389, username: 'qa', options: { engine: 'freerdp', securityMode: 'legacy', ignoreCertificate: false } }
+  assert.deepEqual(sharedConfiguration(shared).options, shared.options)
+  assert.throws(() => sharedConfiguration({ ...shared, options: { engine: 'invalid' } }), /引擎/)
+  assert.throws(() => sharedConfiguration({ ...shared, options: { securityMode: 'invalid' } }), /安全模式/)
+  console.log('PASS configuration sanitizer preserves engine/security options and rejects unknown values')
+  execFileSync(path.join(msys, 'bin/openssl.exe'), ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', path.join(directory, 'key.pem'), '-out', path.join(directory, 'cert.pem'), '-days', '1', '-subj', '/CN=localhost'], { env: environment, windowsHide: true, stdio: 'ignore' })
+  const ntHash = execFileSync(path.join(msys, 'bin/openssl.exe'), ['dgst', '-md4', '-provider', 'legacy', '-binary'], { input: Buffer.from('synthetic-not-a-real-password', 'utf16le'), env: environment, windowsHide: true }).toString('hex')
+  fs.writeFileSync(path.join(directory, 'sam'), `qa-local-only:::${ntHash}:\n`)
+  execFileSync(path.join(msys, 'bin/gcc.exe'), ['native/freerdp/test-peer.c', `-I${sdk}/include/freerdp3`, `-I${sdk}/include/winpr3`, `-L${sdk}/lib`, '-lfreerdp3', '-lwinpr3', '-lws2_32', '-D__STDC_NO_THREADS__', '-Wno-deprecated-declarations', '-o', path.join(directory, 'test-peer.exe')], { env: environment, windowsHide: true, stdio: 'inherit' })
+  let confirmations = 0
+  const verifier = new RdpCertificateVerifier(directory, async () => { confirmations++; return 'once' })
+  const service = new FreeRdpService(libraries, verifier)
+  assert.equal(service.status().available, true)
+  const missing = new FreeRdpService(directory, verifier)
+  assert.equal(missing.status().available, false)
+  const children = []
+  try {
+    for (const scenario of [{ legacy: false, nla: true, ignore: false }, { legacy: false, ignore: true }, { legacy: false }, { legacy: false, ignore: false }, { legacy: true, ignore: true }, { legacy: false, ignore: true, basicPointer: true }]) {
+      const server = peer(scenario.legacy, scenario.nla, scenario.basicPointer)
+      children.push(server)
+      await until(() => /port \d+/.test(server.lines), 'peer port')
+      const port = Number(/port (\d+)/.exec(server.lines)[1])
+      const { socket, packets, transport } = await connect(service, port, { ignoreCertificate: scenario.ignore, securityMode: scenario.legacy ? 'legacy' : 'auto' })
+      await until(() => packets.some(packet => packet[0] === 1 || packet[0] === 3), 'native handshake')
+      assert.equal(service.getError(transport.sessionId), null, `peer exit=${server.exitCode}\n${server.lines}\n${server.errors}`)
+      const ready = packets.find(packet => packet[0] === 1)
+      assert(ready, 'native ready')
+      assert.equal(ready.readUInt32LE(1), 800)
+      if (scenario.nla) assert(server.lines.includes('logon 1'), 'NLA must authenticate before desktop activation')
+      await until(() => packets.some(packet => packet[0] === 2), 'real bitmap frame')
+      const frame = packets.find(packet => packet[0] === 2)
+      assert.equal(frame.readUInt32LE(1), 10)
+      assert.equal(frame.readUInt32LE(5), 20)
+      assert.deepEqual([...frame.subarray(17, 21)], [231, 123, 17, 255])
+      for (const scale of [100, 125, 150, 175, 200]) socket.send(nativeCommand(3, nativeNumbers(1000, 700, scale)))
+      await until(() => server.lines.includes('layout 1000 700 200 100') && packets.some(packet => packet[0] === 1 && packet.readUInt32LE(1) === 1000), 'display control resize and desktop acknowledgement')
+      socket.send(nativeCommand(4, new TextEncoder().encode('QA 中文🙂\r\n')))
+      await until(() => packets.some(packet => packet[0] === 5) && server.lines.includes('clipboard 0051004100204e2d6587d83dde42000d000a0000'), 'native clipboard round-trip')
+      assert.equal(packets.find(packet => packet[0] === 5).subarray(1).toString('utf8'), 'QA-远端🙂\r\n')
+      socket.send(nativeCommand(2, nativeNumbers(6, 1, 30, 0, 2, 30, 0, 3, 0x4e2d, 0, 4, 0x4e2d, 0, 5, 12, 22, 6, 0, 0)))
+      socket.send(nativeCommand(7))
+      await until(() => server.lines.includes('unicode 0 20013') && server.lines.includes('key 32768 30') && server.lines.includes('mouse 4096 12 22'), 'keyboard/mouse/release')
+      socket.send(nativeCommand(2, nativeNumbers(9, 6, 3, 0, 7, 3, 0, 6, 4, 0, 8, 120, 1, 8, -120, 1, 8, 120, 0, 8, -120, 0, 1, 0xe06a, 0, 2, 0xe06a, 0)))
+      socket.send(nativeCommand(7))
+      const extendedInputs = ['mousex 32769 12 22', 'mousex 1 12 22', 'mousex 32770 12 22', 'mousex 2 12 22', 'mouse 1144 12 22', 'mouse 1416 12 22']
+      await until(() => [...(scenario.basicPointer ? [] : extendedInputs), 'mouse 632 12 22', 'mouse 904 12 22', 'key 256 106', 'key 33024 106'].every(line => server.lines.includes(line)), 'extended mouse buttons, release-all, both scroll axes and browser navigation key')
+      if (scenario.basicPointer) {
+        assert(extendedInputs.every(line => !server.lines.includes(line)))
+        assert.equal(service.getError(transport.sessionId), null)
+        console.log('PASS servers without extended mouse/horizontal-wheel capabilities skip unsupported events without disconnecting; ordinary input remains usable')
+      }
+      const child = service.sessions.get(transport.sessionId).child
+      assert.equal(child.spawnargs.length, 1)
+      assert(!JSON.stringify(child.spawnargs).includes('synthetic'))
+      const replay = new WebSocket(transport.wsUrl)
+      let rejected = false
+      replay.on('error', () => { rejected = true })
+      await until(() => rejected, 'single-use session token')
+      replay.terminate()
+      service.release(transport.sessionId)
+      await until(() => child.exitCode !== null || child.signalCode !== null, 'helper cleanup')
+      server.kill()
+      console.log(`PASS real ${scenario.nla ? 'TLS / NLA authentication' : scenario.legacy ? 'Standard RDP Security' : 'TLS'}: RGBA, Chinese input, mouse release, bidirectional clipboard, dynamic resize/DPI, one-use token, secret-free argv and cleanup (ignoreCertificate=${scenario.ignore})`)
+    }
+    assert.equal(confirmations, 2)
+    const server = peer(true)
+    children.push(server)
+    await until(() => /port \d+/.test(server.lines), 'legacy peer')
+    const attempt = await connect(service, Number(/port (\d+)/.exec(server.lines)[1]), { ignoreCertificate: true })
+    await until(() => attempt.packets.some(packet => packet[0] === 3), 'no automatic security downgrade')
+    assert(!attempt.packets.some(packet => packet[0] === 1))
+    service.release(attempt.transport.sessionId)
+    server.kill()
+    console.log('PASS TLS/NLA mode refuses legacy-only server instead of downgrading')
+    const rejectedVerifier = new RdpCertificateVerifier(undefined, async () => 'reject')
+    const rejecting = new FreeRdpService(libraries, rejectedVerifier)
+    const strict = peer(false, true)
+    children.push(strict)
+    try {
+      await until(() => /port \d+/.test(strict.lines), 'strict peer')
+      const attempt = await connect(rejecting, Number(/port (\d+)/.exec(strict.lines)[1]), { ignoreCertificate: false })
+      await until(() => attempt.packets.some(packet => packet[0] === 3), 'certificate rejection')
+      assert.match(rejecting.getError(attempt.transport.sessionId), /证书|拒绝/)
+      assert(!strict.lines.includes('activated'))
+      assert(!strict.lines.includes('logon 1'))
+      console.log('PASS rejected certificate blocks session before activation')
+    } finally { await rejecting.dispose(); strict.kill() }
+    const wrongPassword = peer(false, true)
+    children.push(wrongPassword)
+    await until(() => /port \d+/.test(wrongPassword.lines), 'NLA rejection peer')
+    const incorrect = await connect(service, Number(/port (\d+)/.exec(wrongPassword.lines)[1]), { ignoreCertificate: true }, 'synthetic-wrong-password')
+    await until(() => incorrect.packets.some(packet => packet[0] === 3), 'NLA bad password rejection')
+    assert(!incorrect.packets.some(packet => packet[0] === 1))
+    assert(!wrongPassword.lines.includes('activated'))
+    assert(!service.getError(incorrect.transport.sessionId).includes('synthetic'))
+    service.release(incorrect.transport.sessionId)
+    wrongPassword.kill()
+    console.log('PASS synthetic incorrect password is rejected by NLA without exposing credentials')
+    const local = net.createServer()
+    local.listen(0, '127.0.0.1'); await once(local, 'listening')
+    const freePort = local.address().port
+    await new Promise(resolve => local.close(resolve))
+    const failed = await connect(service, freePort, { ignoreCertificate: true })
+    await until(() => failed.packets.some(packet => packet[0] === 3), 'local refused port')
+    assert(service.getError(failed.transport.sessionId))
+    service.release(failed.transport.sessionId)
+    console.log('PASS failed connection reports a native diagnostic without credentials')
+    const tamper = await service.prepare('127.0.0.1', freePort, { username: 'qa', password: 'not-real', domain: '' }, { engine: 'freerdp' })
+    const forged = new WebSocket(tamper.wsUrl.replace(tamper.token, 'invalid'))
+    let denied = false
+    forged.on('error', () => { denied = true })
+    await until(() => denied, 'invalid token')
+    forged.terminate()
+    const real = new WebSocket(tamper.wsUrl)
+    real.on('error', () => {})
+    const badPackets = []
+    real.on('message', packet => badPackets.push(Buffer.from(packet)))
+    await once(real, 'open')
+    real.send(nativeCommand(1, new TextEncoder().encode('target=malicious.invalid')))
+    await until(() => badPackets.some(packet => packet[0] === 3), 'forbidden renderer configuration')
+    assert(!service.sessions.get(tamper.sessionId).child)
+    service.release(tamper.sessionId)
+    console.log('PASS invalid tokens and renderer-supplied targets/credentials cannot launch a helper')
+    const parallelPeers = [peer(), peer()]
+    children.push(...parallelPeers)
+    await until(() => parallelPeers.every(server => /port \d+/.test(server.lines)), 'parallel peers')
+    const parallel = await Promise.all(parallelPeers.map(server => connect(service, Number(/port (\d+)/.exec(server.lines)[1]), { ignoreCertificate: true })))
+    await until(() => parallel.every(session => session.packets.some(packet => packet[0] === 1)), 'parallel native sessions')
+    service.release(parallel[0].transport.sessionId)
+    parallel[1].socket.send(nativeCommand(2, nativeNumbers(2, 1, 48, 0, 2, 48, 0)))
+    await until(() => parallelPeers[1].lines.includes('key 32768 48'), 'remaining independent session')
+    assert.equal(parallel[1].socket.readyState, WebSocket.OPEN)
+    const crashed = service.sessions.get(parallel[1].transport.sessionId).child
+    crashed.kill()
+    await until(() => parallel[1].packets.some(packet => packet[0] === 3), 'native crash diagnostic')
+    service.release(parallel[1].transport.sessionId)
+    for (const server of parallelPeers) server.kill()
+    console.log('PASS parallel sessions stay independent; closing one leaves the other usable; helper crash is reported')
+    const { chromium } = require('playwright')
+    const browser = await chromium.launch({ executablePath: process.env.OMNIDESK_QA_BROWSER || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', headless: true })
+    const renderedPeer = peer()
+    children.push(renderedPeer)
+    try {
+      const page = await browser.newPage()
+      const errors = []
+      page.on('pageerror', error => errors.push(error.message))
+      await page.setContent('<canvas id="desktop" tabindex="0"></canvas>')
+      const script = esbuild.buildSync({ entryPoints: ['src/renderer/src/features/desktop/freerdp-runtime.ts'], bundle: true, format: 'iife', globalName: 'nativeRdp', write: false, alias: { '@shared': path.join(root, 'src/shared') } }).outputFiles[0].text
+      await page.addScriptTag({ content: script })
+      await until(() => /port \d+/.test(renderedPeer.lines), 'renderer peer port')
+      const transport = await service.prepare('127.0.0.1', Number(/port (\d+)/.exec(renderedPeer.lines)[1]), { username: 'qa-local-only', password: 'synthetic-only', domain: '' }, { engine: 'freerdp', ignoreCertificate: true })
+      await page.evaluate(async transport => {
+        const runtime = nativeRdp.createFreeRdpRuntime()
+        const builder = new runtime.SessionBuilder()
+        const canvas = document.querySelector('canvas')
+        window.remoteClipboard = []
+        builder.proxyAddress(transport.wsUrl).renderCanvas(canvas).desktopSize(new runtime.DesktopSize(800, 600)).remoteClipboardChangedCallback(data => remoteClipboard.push(data.items()[0].value()))
+        const session = await builder.connect()
+        window.fixture = { runtime, builder, session }
+        window.outcome = session.run().then(info => info.reason())
+      }, transport)
+      await page.waitForFunction(() => document.querySelector('canvas').getContext('2d').getImageData(10, 20, 1, 1).data[0] === 231)
+      assert.deepEqual(await page.evaluate(() => [...document.querySelector('canvas').getContext('2d').getImageData(10, 20, 1, 1).data]), [231, 123, 17, 255])
+      await page.evaluate(async () => {
+        const { runtime, session } = fixture
+        const transaction = new runtime.InputTransaction()
+        transaction.addEvent(runtime.DeviceEvent.unicodePressed('中文🙂'))
+        transaction.addEvent(runtime.DeviceEvent.unicodeReleased('中文🙂'))
+        transaction.addEvent(runtime.DeviceEvent.mouseMove(12, 22))
+        transaction.addEvent(runtime.DeviceEvent.mouseButtonPressed(0))
+        transaction.addEvent(runtime.DeviceEvent.mouseButtonPressed(3))
+        transaction.addEvent(runtime.DeviceEvent.mouseButtonReleased(3))
+        transaction.addEvent(runtime.DeviceEvent.mouseButtonPressed(4))
+        transaction.addEvent(runtime.DeviceEvent.wheelRotations(false, 120, 0))
+        transaction.addEvent(runtime.DeviceEvent.wheelRotations(true, -120, 0))
+        session.applyInputs(transaction)
+        session.releaseAllInputs()
+        for (const scale of [100, 125, 150, 175, 200]) session.resize(1000, 700, scale)
+        const clipboard = new runtime.ClipboardData()
+        clipboard.addText('text/plain', 'QA-only 中文\r\n🙂')
+        await session.onClipboardPaste(clipboard)
+        clipboard.free()
+      })
+      await until(() => renderedPeer.lines.includes('unicode 0 25991') && renderedPeer.lines.includes('unicode 0 55357') && renderedPeer.lines.includes('mouse 4096 12 22'), 'renderer input translation')
+      await until(() => ['mousex 32769 12 22', 'mousex 1 12 22', 'mousex 32770 12 22', 'mousex 2 12 22', 'mouse 1144 12 22', 'mouse 904 12 22'].every(line => renderedPeer.lines.includes(line)), 'browser to real FreeRDP extended buttons and horizontal/vertical wheel units')
+      await page.waitForFunction(() => remoteClipboard.includes('QA-远端🙂\r\n'))
+      await page.waitForFunction(() => document.querySelector('canvas').width === 1000 && document.querySelector('canvas').height === 700)
+      await until(() => renderedPeer.lines.includes('layout 1000 700 200 100'), 'browser dynamic-resolution scaling')
+      await page.screenshot({ path: path.join(directory, 'native-canvas.png') })
+      await page.evaluate(async () => { fixture.session.shutdown(); await outcome; fixture.builder.free(); fixture.runtime.runtime.dispose() })
+      service.release(transport.sessionId)
+      assert.deepEqual(errors, [])
+      console.log('PASS browser → native FreeRDP → real peer: canvas, Chinese/surrogates, mouse release, acknowledged resize/DPI, bidirectional clipboard and shutdown')
+    } finally { await browser.close(); renderedPeer.kill() }
+  } finally {
+    for (const child of children) child.kill()
+    await service.dispose()
+  }
+}
+main().catch(error => { console.error(error); process.exitCode = 1 })

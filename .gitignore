@@ -1,0 +1,67 @@
+# ---------- 依赖 ----------
+node_modules/
+
+# ---------- 构建产物 ----------
+# electron-vite 输出
+out/
+# electron-builder 输出（各历史阶段用过不同目录名）
+release/
+dist-app/
+dist/
+# 打包好的安装程序走 GitHub Releases 发布，不进仓库
+installer/
+
+# ---------- 本地验证截图 ----------
+# 这些是开发过程的界面验证截图，可能包含真实配置信息，不公开
+shot-*.png
+
+# ---------- 日志与临时文件 ----------
+*.log
+*.tmp
+tmp/
+logs/
+
+# ---------- 编辑器 / 系统 ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# ---------- 本地环境 ----------
+.env
+.env.*
+*.local
+*.tsbuildinfo
+official-data/
+official-account.json
+official-certificates.json
+official.sqlite*
+
+# ---------- 个人配置 / 凭据 / 备份 ----------
+vault.enc
+vault-key.json
+connections.json
+shared-credentials.json
+webdav-sync.json
+ai-settings.json
+settings.json
+host-keys.json
+rdp-certificates.json
+rdp-trusted-certificates.json
+rdp-legacy-consent.json
+omnidesk-rdp-files/
+configuration-import-recovery.json
+*.odbackup
+*.rdp
+*.rdo
+*.pem
+*.key
+*.pfx
+*.p12
+id_rsa*
+id_ed25519*
+
+ai-conversations.enc
+ai-conversations.enc.tmp
