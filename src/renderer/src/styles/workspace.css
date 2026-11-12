@@ -338,3 +338,14 @@ svg { vertical-align: middle; }
 .file-local-drag:hover { color: var(--accent); }
 
 .files-basename { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.welcome-directory { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 12px; }
+.welcome-directory-heading { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; padding: 13px 15px; background: var(--surface); color: var(--text); text-align: left; cursor: pointer; }
+.welcome-directory-heading > svg:first-child { color: var(--accent); }
+.welcome-directory-heading strong { font-size: 13px; font-weight: 600; }
+.welcome-directory-heading span { color: var(--text-tertiary); font: 11px var(--font-mono); }
+.welcome-directory-heading > svg:last-child { margin-left: auto; transition: transform .15s ease; }
+.welcome-directory-heading[aria-expanded='true'] > svg:last-child { transform: rotate(90deg); }
+.welcome-directory-heading:hover { background: var(--accent-subtle); }
+.welcome-directory-heading:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.welcome-directory .welcome-connection-row { border-radius: 0; }

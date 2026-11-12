@@ -48,6 +48,7 @@ export function createFreeRdpRuntime(openSocket: OpenNativeSocket = browserSocke
   class NativeSession implements DesktopSession {
     private ended = false
     private ready = false
+    private reconnecting = false
     private result: Promise<{ reason(): string; free(): void }>
     private resolve!: (value: { reason(): string; free(): void }) => void
     private reject!: (error: Error) => void
@@ -105,14 +106,17 @@ export function createFreeRdpRuntime(openSocket: OpenNativeSocket = browserSocke
             const status = JSON.parse(new TextDecoder().decode(bytes.subarray(1)))
             builder.clipboard?.({ items: () => [{ mimeType: () => 'application/x-omnidesk-file-transfer', value: () => status }] })
           }
-          else throw new Error('未知或损坏的事件')
+          else if (bytes[0] === 11 && bytes.length === 9 && number(1) <= 1) {
+            this.reconnecting = number(1) === 1
+            builder.connectionState?.({ reconnecting: this.reconnecting, attempt: number(5) })
+          } else throw new Error('未知或损坏的事件')
         } catch (error) { this.fail(new Error(`FreeRDP 画面处理失败：${error instanceof Error ? error.message : '数据不正确'}`)) }
       })
     }
-    private send(data: Uint8Array): void {
-      if (this.ended || !this.socketOpen) return
-      try { this.socket.send(data) }
-      catch (error) { this.fail(error instanceof Error ? error : new Error('FreeRDP 本机输入发送失败')) }
+    private send(data: Uint8Array): boolean {
+      if (this.ended || !this.socketOpen || this.reconnecting) return false
+      try { this.socket.send(data); return true }
+      catch (error) { this.fail(error instanceof Error ? error : new Error('FreeRDP 本机输入发送失败')); return false }
     }
     private fail(error: Error): void {
       if (this.ended) return
@@ -137,8 +141,9 @@ export function createFreeRdpRuntime(openSocket: OpenNativeSocket = browserSocke
     }
     async onClipboardPaste(content: DesktopClipboard): Promise<void> {
       if (!(content instanceof NativeClipboard)) throw new Error('FreeRDP 剪贴板类型不正确')
+      if (this.ended || !this.ready || !this.socketOpen || this.reconnecting) throw new Error('剪贴板通道正在恢复或已关闭，请稍后重试')
       if (content.text.length > 1024 * 1024) throw new Error('剪贴板文本超过 1M 字符')
-      this.send(nativeCommand(4, new TextEncoder().encode(content.text)))
+      if (!this.send(nativeCommand(4, new TextEncoder().encode(content.text)))) throw new Error('剪贴板发送失败，请重新连接后重试')
     }
     releaseAllInputs(): void { this.send(nativeCommand(7)) }
     resize(width: number, height: number, scale = 100): void { this.send(nativeCommand(3, nativeNumbers(width, height, scale ?? 100))) }
@@ -153,6 +158,8 @@ export function createFreeRdpRuntime(openSocket: OpenNativeSocket = browserSocke
     cursor?: (kind: string, data?: string, x?: number, y?: number) => void
     clipboard?: (data: unknown) => void
     forceClipboard?: () => void
+    connectionState?: (state: { reconnecting: boolean; attempt: number }) => void
+    connectionStateChanged(callback: NonNullable<NativeBuilder['connectionState']>) { this.connectionState = callback; return this }
     username(_value: string) { return this }
     password(_value: string) { return this }
     destination(_value: string) { return this }

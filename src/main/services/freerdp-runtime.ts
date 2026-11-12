@@ -19,7 +19,7 @@ export function checkNativeRuntime(directory: string): Promise<void> {
   return new Promise((resolve, reject) => {
     execFile(join(directory, 'omnidesk-freerdp.exe'), ['--version'], { cwd: directory, env: nativeEnvironment(directory), windowsHide: true, timeout: 8000, maxBuffer: 16384 }, (error, stdout) => {
       if (error) { reject(new Error(nativeStartupError(error.code, error.signal))); return }
-      if (!/^OmniDesk FreeRDP [\d.]+ protocol=5\s*$/.test(stdout.trim())) { reject(new Error('FreeRDP 辅助程序协议不匹配，请重新安装完整安装包')); return }
+      if (!/^OmniDesk FreeRDP [\d.]+ protocol=6\s*$/.test(stdout.trim())) { reject(new Error('FreeRDP 辅助程序协议不匹配，请重新安装完整安装包')); return }
       resolve()
     })
   })

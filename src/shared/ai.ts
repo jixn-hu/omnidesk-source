@@ -4,9 +4,9 @@ export type AiPermissionMode = 'read' | 'edit' | 'full'
 export const AI_DEFAULT_MAX_MODEL_CALLS = 200
 export const AI_MAX_MODEL_CALLS = 1000
 export const aiPermissionModes = [
-  { value: 'read', label: '只读权限', description: '读取服务器资料，查询 Linux / Windows 状态。' },
-  { value: 'edit', label: '编辑权限', description: '允许查询、新增服务器资料，以及修改标签、备注、分组。' },
-  { value: 'full', label: '完全权限', description: '允许编辑，并可确认删除服务器资料、逐条确认执行任意 SSH 命令。' }
+  { value: 'read', label: '只读权限', description: '自动查询；新增、修改、删除资料及 SSH 命令需逐项确认。' },
+  { value: 'edit', label: '编辑权限', description: '自动查询、新增及修改资料；删除资料与 SSH 命令需逐项确认。' },
+  { value: 'full', label: '完全权限', description: '在当前服务器范围内自动查询、变更资料及执行 SSH 命令。' }
 ] as const
 export interface AiConfiguration { baseUrl: string; model: string; hasApiKey: boolean; maxModelCalls: number; permissionMode: AiPermissionMode }
 export interface AiConfigurationInput { baseUrl: string; model: string; apiKey?: string; clearApiKey?: boolean; maxModelCalls?: number; permissionMode?: AiPermissionMode }
@@ -17,9 +17,9 @@ export type AiApprovalRequest = {
   destination: string
   command: string
   reason: string
-} | { kind: 'question'; title: string; message: string } | { kind: 'delete'; serverId: string; serverName: string; destination: string }
-export type AiApproval = AiApprovalRequest & { id: string; expiresAt: number }
-export type AiApprovalOutcome = 'pending' | 'confirmed' | 'cancelled' | 'expired' | 'stopped'
+} | { kind: 'edit'; title: string; message: string } | { kind: 'question'; title: string; message: string } | { kind: 'delete'; serverId: string; serverName: string; destination: string }
+export type AiApproval = AiApprovalRequest & { id: string; expiresAt?: number }
+export type AiApprovalOutcome = 'pending' | 'confirmed' | 'cancelled' | 'expired' | 'stopped' | 'superseded'
 export type AiApprovalRecord = AiApproval & { outcome: AiApprovalOutcome }
 export interface AiMessage {
   id: string

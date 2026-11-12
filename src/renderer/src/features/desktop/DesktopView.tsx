@@ -13,7 +13,7 @@ import { createRdpClipboard, type RdpClipboard } from './rdp-clipboard'
 import FileTransferNotice from './FileTransferNotice'
 import { friendlyRdpError } from './rdp-errors'
 
-type Phase = 'idle' | 'preparing' | 'loading' | 'connecting' | 'live' | 'error' | 'ended'
+type Phase = 'idle' | 'preparing' | 'loading' | 'connecting' | 'live' | 'reconnecting' | 'error' | 'ended'
 
 type RdpModule = DesktopRuntime
 type RdpSessionBuilder = DesktopBuilder
@@ -59,7 +59,7 @@ export default function DesktopView({ tab, active = true }: { tab: Tab; active?:
 
   useEffect(() => {
     updateTab(tab.id, { status: phase === 'live' ? 'connected' : phase === 'error' ? 'error' :
-      ['preparing', 'loading', 'connecting'].includes(phase) ? 'connecting' : 'idle', error: phase === 'error' ? error : undefined })
+      ['preparing', 'loading', 'connecting', 'reconnecting'].includes(phase) ? 'connecting' : 'idle', error: phase === 'error' ? error : undefined })
   }, [phase, error, tab.id, updateTab])
 
   const connections = useApp((s) => s.connections)
@@ -86,6 +86,7 @@ export default function DesktopView({ tab, active = true }: { tab: Tab; active?:
     let inputCleanup: (() => void) | undefined
     let sessionEstablished = false
     let clipboardBridge: RdpClipboard | undefined
+    let reconnecting = false
     const api = window.omnidesk
 
     const boot = async () => {
@@ -203,6 +204,14 @@ export default function DesktopView({ tab, active = true }: { tab: Tab; active?:
           })
         }
 
+        builder.connectionStateChanged?.(state => {
+          if (disposed) return
+          setPhase(state.reconnecting ? 'reconnecting' : 'live')
+          setHint(state.reconnecting ? `连接中断，正在恢复原会话（第 ${state.attempt} 次）…` : '')
+          reconnecting = state.reconnecting
+          if (reconnecting) clipboardBridge?.reset()
+          else void clipboardBridge?.sync(true)
+        })
         const pending = builder.connect()
         void pending.then((session) => {
           if (disposed || abandoned) session.shutdown()
@@ -222,7 +231,13 @@ export default function DesktopView({ tab, active = true }: { tab: Tab; active?:
         ownedSession = session
         if (options.enableClipboard !== false) {
           clipboardBridge = createRdpClipboard({
-            canSync: () => !disposed && activeRef.current && sessionRef.current === session && document.hasFocus() && (document.activeElement === canvas || document.activeElement === keyboardRef.current),
+            canSync: () => !disposed && !reconnecting && activeRef.current && sessionRef.current === session && document.hasFocus() && (document.activeElement === canvas || document.activeElement === keyboardRef.current),
+            canReceive: () => !disposed && !reconnecting && activeRef.current && sessionRef.current === session && document.hasFocus(),
+            canPublishText: prepared.data.engine === 'freerdp' ? async () => {
+              const result = await api.rdp.clipboardFiles(transport.sessionId, 'sync-text')
+              if (!result.ok) throw new Error(result.message)
+              return result.data === false
+            } : undefined,
             readText: async () => {
               const result = await api.rdp.readClipboard(transport.sessionId)
               if (!result.ok) throw new Error(result.message)
@@ -744,7 +759,7 @@ export default function DesktopView({ tab, active = true }: { tab: Tab; active?:
     }
   }
 
-  const busy = phase === 'preparing' || phase === 'loading' || phase === 'connecting'
+  const busy = phase === 'preparing' || phase === 'loading' || phase === 'connecting' || phase === 'reconnecting'
 
   return (
     <div className="desktop-workspace">
@@ -760,7 +775,7 @@ export default function DesktopView({ tab, active = true }: { tab: Tab; active?:
       <canvas
         ref={canvasRef}
         className="desktop-canvas"
-        style={{ display: phase === 'live' ? 'block' : 'none' }}
+        style={{ display: phase === 'live' || phase === 'reconnecting' ? 'block' : 'none', pointerEvents: phase === 'reconnecting' ? 'none' : undefined }}
       />
 
       {phase !== 'live' && (
@@ -772,11 +787,13 @@ export default function DesktopView({ tab, active = true }: { tab: Tab; active?:
                 {phase === 'preparing' && '准备传输通道'}
                 {phase === 'loading' && '加载协议栈'}
                 {phase === 'connecting' && '协商会话'}
+                {phase === 'reconnecting' && '正在恢复原会话'}
               </div>
               {hint && <div style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>{hint}</div>}
             </>
           )}
 
+          {phase === 'reconnecting' && <button className="btn" onClick={() => sessionRef.current?.shutdown()}>停止重连</button>}
           {phase === 'idle' && <div style={{ color: 'var(--text-secondary)' }}>等待开始</div>}
 
           {phase === 'ended' && (

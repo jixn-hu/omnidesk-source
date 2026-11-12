@@ -20,10 +20,10 @@ const until = async predicate => { const deadline = Date.now() + 5000; while (!p
 async function main() {
   model.listen(0, '127.0.0.1'); await once(model, 'listening')
   ai = new AiService(directory, connections, vault, options)
-  ai.saveConfiguration({ baseUrl: `http://127.0.0.1:${model.address().port}/v1`, model: 'qa', permissionMode: 'full' })
+  ai.saveConfiguration({ baseUrl: `http://127.0.0.1:${model.address().port}/v1`, model: 'qa', permissionMode: 'edit' })
   handler = () => ({ role: 'assistant', content: null, tool_calls: [{ id: 'pending-command', type: 'function', function: { name: 'run_ssh', arguments: JSON.stringify({ server_id: connection.id, command: 'echo pending', reason: 'QA pending confirmation' }) } }] })
   const id = ai.state().conversationId
-  ai.send('QA private task history', [connection.id]); await until(() => ai.state().pending)
+  await ai.send('QA private task history', [connection.id]); await until(() => ai.state().pending)
   const pendingId = ai.state().pending.id
   ai.dispose()
   const filename = path.join(directory, 'ai-conversations.enc'), contents = fs.readFileSync(filename, 'utf8')
@@ -45,7 +45,7 @@ async function main() {
     assert(interrupted && JSON.parse(interrupted.content).interrupted)
     return { role: 'assistant', content: 'QA restored summary' }
   }
-  ai.send('仅整理已有信息', [connection.id], id); await until(() => ai.state().status === 'idle')
+  await ai.send('仅整理已有信息', [connection.id], id); await until(() => ai.state().status === 'idle')
   assert.equal(ai.state().conversations[0].interrupted, false)
   assert.equal(executions, 0); ai.dispose()
   // A wrong vault or damaged ciphertext must not overwrite the original archive.

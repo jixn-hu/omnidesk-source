@@ -1,6 +1,6 @@
 {
   "name": "omnidesk",
-  "version": "0.6.15",
+  "version": "0.6.43",
   "description": "远程控制工作台 —— 连接 Windows / Linux，并对 AI 与外部系统开放能力",
   "main": "./out/main/index.js",
   "author": "OmniDesk",
@@ -8,12 +8,13 @@
   "private": true,
   "scripts": {
     "build:freerdp": "node tools/build-freerdp.cjs",
-    "dev": "electron-vite dev",
-    "build": "node tools/verify-rdp-runtime.cjs && electron-vite build",
+    "dev": "npm run build:monitor-agent && electron-vite dev",
+    "build": "npm run build:monitor-agent && node tools/verify-rdp-runtime.cjs && electron-vite build",
     "start": "electron-vite preview",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build:freerdp && npm run build && electron-builder --win",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json"
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "build:monitor-agent": "node tools/build-monitor-agent.cjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
@@ -22,6 +23,7 @@
     "@xterm/xterm": "^5.5.0",
     "express": "^4.21.2",
     "guacamole-common-js": "1.5.0",
+    "motion": "14.11.1",
     "ssh2": "^1.16.0",
     "ws": "^8.18.0"
   },
@@ -91,6 +93,23 @@
       {
         "from": "node_modules/guacamole-common-js/LICENSE",
         "to": "licenses/Guacamole-LICENSE"
+      },
+      {
+        "from": "out/monitor-agent",
+        "to": "monitor-agent",
+        "filter": [
+          "omnidesk-monitor-agent-linux-*",
+          "omnidesk-monitor-agent-windows-*.exe",
+          "install-windows.ps1",
+          "install.sh",
+          "install-user.sh",
+          "manifest.json",
+          "licenses/**/*"
+        ]
+      },
+      {
+        "from": "docs/licenses/Motion-LICENSE",
+        "to": "licenses/motion-LICENSE"
       }
     ],
     "asar": true,

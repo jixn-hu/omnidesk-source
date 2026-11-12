@@ -30,6 +30,7 @@ export interface DesktopBuilder {
   desktopSize(value: { width: number; height: number }): DesktopBuilder
   forceClipboardUpdateCallback(callback: () => void): DesktopBuilder
   remoteClipboardChangedCallback(callback: (data: unknown) => void): DesktopBuilder
+  connectionStateChanged?(callback: (state: { reconnecting: boolean; attempt: number }) => void): DesktopBuilder
   connect(): Promise<DesktopSession>
   free(): void
 }

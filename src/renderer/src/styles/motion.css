@@ -1,0 +1,42 @@
+/* Workspace motion stays on decoration and controls, never session surfaces. */
+:root {
+  --motion-fast: 120ms;
+  --motion-surface: 180ms;
+  --motion-data: 300ms;
+  --motion-ease: cubic-bezier(.22, 1, .36, 1);
+}
+.motion-nav-item { position: relative; isolation: isolate; }
+.nav-selection { position: absolute; inset: 0; z-index: -1; pointer-events: none; border-radius: inherit; background: var(--accent-subtle); border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent); }
+.sidebar .motion-nav-item.is-active { background: transparent; border-color: transparent; }
+.sidebar-footer .motion-nav-item:has(.nav-selection), .sidebar-rail .motion-nav-item:has(.nav-selection) { color: var(--accent); }
+.tab.motion-nav-item[data-active='true'] { background: transparent; border-color: transparent; box-shadow: none; }
+.tab .nav-selection { inset: -1px; background: var(--bg); border-color: var(--border); border-bottom: none; box-shadow: inset 0 2px var(--accent); }
+.btn { transition: background var(--motion-fast), border-color var(--motion-fast), color var(--motion-fast), box-shadow var(--motion-fast); }
+.btn:enabled:active:not(.motion-nav-item) { box-shadow: inset 0 0 0 100px color-mix(in srgb, currentColor 6%, transparent); }
+.modal-overlay, .modal-backdrop { animation: surface-fade var(--motion-fast) ease-out; }
+.modal-overlay > .modal, .modal-backdrop > .modal { animation: dialog-appear var(--motion-surface) var(--motion-ease); }
+.file-context-menu, .tab-context-menu { animation: surface-fade var(--motion-fast) ease-out; }
+.file-context-menu button, .tab-context-menu button { transition: background var(--motion-fast), color var(--motion-fast); }
+.monitor-node-card { transition: border-color var(--motion-fast), background var(--motion-fast); }
+.monitor-node-card:hover { border-color: var(--border-strong); }
+.monitor-resource-track { overflow: hidden; }
+.monitor-resource-track > span { transition: width var(--motion-data) var(--motion-ease); }
+.action-icon-slot { width: 15px; height: 15px; position: relative; flex-shrink: 0; }
+.action-icon-slot > span { position: absolute; inset: 0; display: flex; opacity: 0; transform: translateY(3px) scale(.85); transition: opacity var(--motion-fast), transform var(--motion-surface) var(--motion-ease); }
+.action-button[data-phase='idle'] .action-icon-idle,
+.action-button[data-phase='busy'] .action-icon-busy,
+.action-button[data-phase='success'] .action-icon-success { opacity: 1; transform: none; }
+.action-button[data-phase='busy'] .action-icon-busy svg { animation: spin 850ms linear infinite; }
+.action-button[data-phase='success'] .action-icon-success path { stroke-dasharray: 28; animation: action-check 200ms var(--motion-ease); }
+.action-label { display: grid; align-items: center; }
+.action-label > span { grid-area: 1 / 1; }
+.action-label-measure { visibility: hidden; }
+@keyframes surface-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes dialog-appear { from { opacity: 0; transform: translateY(5px) scale(.99); } to { opacity: 1; transform: none; } }
+@keyframes action-check { from { stroke-dashoffset: 28; } to { stroke-dashoffset: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .modal-overlay, .modal-backdrop, .modal-overlay > .modal, .modal-backdrop > .modal,
+  .file-context-menu, .tab-context-menu, .action-icon-slot svg, .action-icon-slot path { animation: none !important; }
+  .monitor-resource-track > span, .action-icon-slot > span, .btn, .monitor-node-card { transition: none !important; }
+  .action-icon-slot > span { transform: none; }
+}

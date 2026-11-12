@@ -65,7 +65,7 @@ async function until(predicate, label) {
 async function start(next, ids = [first.id], text = '处理已选服务器') {
   assert.equal(ai.state().status, 'idle'); assert.equal(steps.length, 0)
   steps = [...next]
-  ai.send(text, ids)
+  await ai.send(text, ids)
 }
 async function idle() { await until(() => ai.state().status === 'idle', 'idle'); assert.equal(steps.length, 0); assert.deepEqual(failures, []) }
 function errors() { return ai.state().messages.filter(message => message.error).map(message => message.text).join('\n') }
@@ -76,11 +76,11 @@ async function main() {
     '-----BEGIN RSA PRIVATE KEY-----\nunseen-secret\ntruncated', 'some known-' + password
   ]) assert(!redactAiText(value, [password]).includes('unseen-secret') && !redactAiText(value, [password]).includes(password), value)
   assert.equal(ai.configuration().baseUrl, '')
-  assert.throws(() => ai.send('x', [first.id]), /请先配置/)
+  await assert.rejects(() => ai.send('x', [first.id]), /请先配置/)
   for (const baseUrl of ['file:///local', 'https://user:password@example.test/v1', 'https://example.test/v1?key=x']) assert.throws(() => ai.saveConfiguration({ baseUrl, model: 'qa' }))
   server.listen(0, '127.0.0.1'); await once(server, 'listening')
   const baseUrl = `http://127.0.0.1:${server.address().port}/v1`
-  ai.saveConfiguration({ baseUrl, model: 'explicit-qa-model', apiKey, permissionMode: 'full' })
+  ai.saveConfiguration({ baseUrl, model: 'explicit-qa-model', apiKey, permissionMode: 'edit' })
   recoverConfigurationImport(directory)
   assert.equal(ai.configuration().hasApiKey, true)
   assert(!fs.readFileSync(path.join(directory, 'ai-settings.json'), 'utf8').includes(apiKey))
@@ -134,6 +134,45 @@ async function main() {
   const cancelledId = ai.state().pending.id
   ai.cancel(); await idle(); assert.equal(ai.confirm(cancelledId, true), false); assert.equal(executions.length, 0)
   assert.equal(ai.state().messages.find(message => message.approval?.id === cancelledId).approval.outcome, 'stopped')
+  delete options.approvalTimeoutMs
+  ai.setPermissionMode('read')
+  const beforeRedirect = connections.list()
+  for (const proposed of [
+    custom,
+    call('ask_user', { title: '等待用户方案', message: '请确认是否继续。' }),
+    call('update_metadata', { server_ids: [first.id], changes: { note: { mode: 'append', value: '不得写入的旧建议' } } }),
+    call('delete_server', { server_id: first.id })
+  ]) {
+    const later = call('update_metadata', { server_ids: [first.id], changes: { note: { mode: 'append', value: '不得执行的同批操作' } } })
+    await start([response(proposed, later)])
+    await until(() => ai.state().pending, 'nonblocking approval')
+    const oldId = ai.state().pending.id
+    assert.equal(ai.state().pending.expiresAt, undefined, 'Default approvals must not expire automatically')
+    await assert.rejects(() => ai.send(' ', [first.id]), /任务说明/)
+    assert.equal(ai.state().pending.id, oldId, 'Invalid input must preserve pending approval')
+    steps = [body => {
+      assert.equal(body.messages.at(-1).role, 'user')
+      assert.equal(body.messages.at(-1).content, '先不执行，换个方案')
+      for (let i = 0; i < body.messages.length; i++) {
+        const calls = body.messages[i].tool_calls
+        if (!calls?.length) continue
+        const results = body.messages.slice(i + 1, i + 1 + calls.length)
+        assert.deepEqual(results.map(item => item.tool_call_id), calls.map(item => item.id))
+        assert(results.every(item => item.role === 'tool'))
+      }
+      return done
+    }]
+    const followup = ai.send('先不执行，换个方案', [first.id])
+    assert.equal(ai.confirm(oldId, true), false, 'Superseded approval cannot execute during handoff')
+    await assert.rejects(() => ai.send('重复并发发送', [first.id]), /当前 AI 任务/)
+    await followup; await idle()
+    assert.equal(ai.confirm(oldId, true), false)
+    assert.equal(ai.state().messages.find(item => item.approval?.id === oldId).approval.outcome, 'superseded')
+    assert.deepEqual(connections.list(), beforeRedirect)
+    assert.equal(executions.length, 0)
+  }
+  ai.setPermissionMode('edit')
+  options.approvalTimeoutMs = 2000
   await start([response(custom), done]); await until(() => ai.state().pending, 'stale')
   connections.save({ ...connections.get(first.id), host: '192.0.2.99' })
   ai.confirm(ai.state().pending.id, true); await idle(); assert.equal(executions.length, 0); assert.match(errors(), /其他操作修改/)
@@ -199,7 +238,7 @@ async function main() {
   assert.match(errors(), /HTTP 401/); assert(!JSON.stringify(ai.state()).includes(apiKey))
   await start([response(call('run_ssh', { server_id: first.id, command: 'hang', reason: '测试执行中取消' }))]); await until(() => ai.state().pending, 'hang approval')
   ai.confirm(ai.state().pending.id, true); await until(() => executions.length, 'hang execution'); ai.cancel(); await idle(); executions = []
-  vault.lock(); assert.throws(() => ai.send('locked', [first.id]), /解锁/); vault.unlock('Synthetic-local-vault')
+  vault.lock(); await assert.rejects(() => ai.send('locked', [first.id]), /解锁/); vault.unlock('Synthetic-local-vault')
   const shared = new SharedCredentialStore(directory)
   const backup = new ConfigurationBackupService(directory, connections, shared, vault, async () => true)
   const snapshot = { version: 1, connections: [], sharedCredentials: [], credentials: { 'omnidesk-ai-api-key': { secret: 'evil' } } }
@@ -222,6 +261,7 @@ async function main() {
   console.log('PASS: private field projection, key/password redaction including JSON/partial PEM, bounded provider errors and model history reset')
   console.log('PASS: Windows-only tool exposure, Windows query scope/argument checks, and one-attempt management-channel failure handling')
   console.log('PASS: durable approval outcomes, general confirmation tool and validation, cancellation/timeout skip remaining operations, and independent SSH authorization')
+  console.log('PASS: no default approval expiry, new instructions supersede question/SSH/edit/delete approvals, reject stale confirmation and concurrent sends, preserve complete tool history and skip remaining batch operations')
   console.log('QA_DIRECTORY=' + directory)
 }
 main().catch(error => { console.error(error); process.exitCode = 1 }).finally(async () => { ai.dispose(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)) })

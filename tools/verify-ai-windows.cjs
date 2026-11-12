@@ -24,7 +24,7 @@ const originalSpawn = cp.spawn, originalConnect = net.createConnection
 let mode = 'success', networkMode = 'success', helper, socket, spawned = [], rpc = [], payloads = [], wire = []
 let lockedDuringProbe = false
 const guard = username => assert.equal(username, 'QA-DOMAIN\\effective-admin')
-const inspect = (topic = 'system', signal = new AbortController().signal, input = connection, before = guard, vpn = {}) => inspectAiWindows(vault, shared, vpn, input, topic, signal, before)
+const inspect = (topic = 'system', signal = new AbortController().signal, input = connection, before = guard) => inspectAiWindows(vault, shared, input, topic, signal, before)
 async function until(predicate) {
   const deadline = Date.now() + 3000
   while (!predicate()) { if (Date.now() > deadline) throw new Error('fixture timeout'); await new Promise(resolve => setTimeout(resolve, 10)) }
@@ -67,7 +67,7 @@ async function main() {
     })
     return current
   }
-  const result = await inspect()
+  const result = await inspect('system', new AbortController().signal, { ...connection, vpn: { name: 'legacy VPN metadata' } })
   assert.equal(result.code, 0); assert.match(result.stdout, /中文 Windows/)
   for (const secret of [password, 'unseen-secret', 'unseen-token']) assert(!JSON.stringify(result).includes(secret))
   assert.deepEqual(rpc.pop(), { host: '192.0.2.10', port: 135 })
@@ -80,7 +80,6 @@ async function main() {
   const beforeInvalid = spawned.length
   await assert.rejects(inspect('system;Remove-Item'), /受支持/)
   await assert.rejects(inspect('system', new AbortController().signal, { ...connection, proxy: { type: 'socks5' } }), /不支持.*代理/)
-  await assert.rejects(inspect('system', new AbortController().signal, { ...connection, vpn: { name: 'QA VPN' } }, guard, { isConnected: async () => false }), /请先连接/)
   await assert.rejects(inspect('system', new AbortController().signal, connection, () => { throw new Error('目标已变化') }), /目标已变化/)
   assert.equal(spawned.length, beforeInvalid)
   const canceled = new AbortController(); canceled.abort(); await assert.rejects(inspect('system', canceled.signal))
@@ -98,7 +97,7 @@ async function main() {
   await until(() => spawned.length > started); running.abort(); await assert.rejects(pending, /取消/); assert(helper.killed)
   vault.lock(); await assert.rejects(inspect(), /解锁/); vault.unlock('QA-local-master-password')
   cp.spawn = originalSpawn; net.createConnection = originalConnect
-  console.log('PASS Windows adapter: effective shared domain identity, host/port normalization, protected stdin, no secrets in args/output, RPC/VPN/proxy/vault guards, query validation, cancellation, errors and output bounds')
+  console.log('PASS Windows adapter: effective shared domain identity, host/port normalization, protected stdin, no secrets in args/output, RPC/proxy/vault guards, legacy metadata compatibility, query validation, cancellation, errors and output bounds')
 
   // The remote session is substituted, while every fixed CIM query runs against real local Windows classes.
   const prelude = `

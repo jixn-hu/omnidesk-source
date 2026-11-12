@@ -9,6 +9,7 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
 import { openNativeSocket } from './native-socket'
 import { IPC } from '@shared/ipc.js'
+import type { MonitoringApi } from '@shared/monitoring'
 import type {
   Connection,
   ConnectionCheck,
@@ -22,9 +23,7 @@ import type {
   ProxyConfig,
   SessionInfo,
   SharedCredential,
-  VaultMode,
-  VpnConnectResult,
-  VpnConnection
+  VaultMode
 } from '@shared/types.js'
 import type { ConfigurationApi } from '@shared/types.js'
 import type { OfficialAccountApi } from '@shared/account.js'
@@ -64,6 +63,9 @@ const api = {
   account: {
     openAdmin: () => ipcRenderer.invoke(IPC.accountOpenAdmin),
     status: () => ipcRenderer.invoke(IPC.accountStatus),
+    onChanged: callback => { const listener=(_event:Electron.IpcRendererEvent,status:import('@shared/account').OfficialAccountStatus)=>callback(status); ipcRenderer.on(IPC.accountChanged,listener); return ()=>ipcRenderer.removeListener(IPC.accountChanged,listener) },
+    switchAccount: (id: string) => ipcRenderer.invoke(IPC.accountSwitch,id),
+    removeAccount: (id: string) => ipcRenderer.invoke(IPC.accountRemove, id),
     configure: (url: string) => ipcRenderer.invoke(IPC.accountConfigure, url),
     authenticate: (action: 'register' | 'login', username: string, password: string) => ipcRenderer.invoke(IPC.accountAuthenticate, action, username, password),
     providers: () => ipcRenderer.invoke(IPC.accountProviders),
@@ -73,8 +75,8 @@ const api = {
     pollGitlab: (id) => ipcRenderer.invoke(IPC.accountGitlabPoll, id),
     cancelGitlab: (id) => ipcRenderer.invoke(IPC.accountGitlabCancel, id),
     logout: () => ipcRenderer.invoke(IPC.accountLogout),
-    upload: () => ipcRenderer.invoke(IPC.accountUpload),
-    download: () => ipcRenderer.invoke(IPC.accountDownload),
+    upload: (options) => ipcRenderer.invoke(IPC.accountUpload, options),
+    download: (options) => ipcRenderer.invoke(IPC.accountDownload, options),
     shares: (search: string, page: number) => ipcRenderer.invoke(IPC.accountShares, search, page),
     users: (search: string, page: number) => ipcRenderer.invoke(IPC.accountUsers, search, page),
     publish: (id: string) => ipcRenderer.invoke(IPC.accountPublish, id),
@@ -93,15 +95,22 @@ const api = {
     apply: (id, connectionId) => ipcRenderer.invoke(IPC.credentialProbeApply, id, connectionId)
   } satisfies import('@shared/credential-probe').CredentialProbeApi,
   configuration: {
+    onRestored: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, summary: import('@shared/types').ConfigurationSummary) => callback(summary)
+      ipcRenderer.on(IPC.configurationRestored, listener)
+      return () => ipcRenderer.removeListener(IPC.configurationRestored, listener)
+    },
+    exportMonitorData: (password) => ipcRenderer.invoke(IPC.configurationMonitorExport, password),
+    decryptMonitorData: (password) => ipcRenderer.invoke(IPC.configurationMonitorDecrypt, password),
     passwordStatus: () => ipcRenderer.invoke(IPC.configurationPasswordStatus),
     savePassword: (password) => ipcRenderer.invoke(IPC.configurationSavePassword, password),
-    exportFile: (password) => ipcRenderer.invoke(IPC.configurationExport, password),
-    importFile: (password) => ipcRenderer.invoke(IPC.configurationImport, password),
+    exportFile: (password, options) => ipcRenderer.invoke(IPC.configurationExport, password, options),
+    importFile: (password, options) => ipcRenderer.invoke(IPC.configurationImport, password, options),
     webdav: () => ipcRenderer.invoke(IPC.webdavConfiguration),
     saveWebdav: (configuration) => ipcRenderer.invoke(IPC.webdavSave, configuration),
     testWebdav: () => ipcRenderer.invoke(IPC.webdavTest),
-    uploadWebdav: (password) => ipcRenderer.invoke(IPC.webdavUpload, password),
-    downloadWebdav: (password) => ipcRenderer.invoke(IPC.webdavDownload, password)
+    uploadWebdav: (password, options) => ipcRenderer.invoke(IPC.webdavUpload, password, options),
+    downloadWebdav: (password, options) => ipcRenderer.invoke(IPC.webdavDownload, password, options)
   } satisfies ConfigurationApi,
   /* ---------------------------- 应用 ---------------------------- */
   app: {
@@ -159,6 +168,11 @@ const api = {
   },
 
   /* ----------------------------- SSH ----------------------------- */
+  docker: {
+    snapshot: (sessionId: string) => ipcRenderer.invoke(IPC.dockerSnapshot, sessionId) as Promise<IpcResult<import('@shared/docker.js').DockerSnapshot>>,
+    remove: (sessionId: string, request: import('@shared/docker.js').DockerRemoveRequest) => ipcRenderer.invoke(IPC.dockerRemove, sessionId, request) as Promise<IpcResult<boolean>>
+  },
+
   ssh: {
     connect: (connectionId: string, cols?: number, rows?: number, ownerId?: string) =>
       ipcRenderer.invoke(IPC.sshConnect, connectionId, cols, rows, ownerId) as Promise<IpcResult<SessionInfo>>,
@@ -223,7 +237,7 @@ const api = {
     getError: (sessionId: string) => ipcRenderer.invoke(IPC.rdpGetError, sessionId) as Promise<IpcResult<string | null>>,
     readClipboard: (sessionId: string) => ipcRenderer.invoke(IPC.rdpClipboardRead, sessionId) as Promise<IpcResult<string>>,
     writeClipboard: (sessionId: string, text: string) => ipcRenderer.invoke(IPC.rdpClipboardWrite, sessionId, text) as Promise<IpcResult<boolean>>,
-    clipboardFiles: (sessionId: string, action: 'paste' | 'offer' | 'receive' | 'cancel' | 'cancel-paste') => ipcRenderer.invoke(IPC.rdpClipboardFiles, sessionId, action) as Promise<IpcResult<boolean | 'remote'>>,
+    clipboardFiles: (sessionId: string, action: 'paste' | 'offer' | 'receive' | 'cancel' | 'cancel-paste' | 'sync-text') => ipcRenderer.invoke(IPC.rdpClipboardFiles, sessionId, action) as Promise<IpcResult<boolean | 'remote'>>,
     launchSystemClient: (connectionId: string) =>
       ipcRenderer.invoke(IPC.rdpLaunchSystemClient, connectionId) as Promise<IpcResult<boolean>>
   },
@@ -253,16 +267,6 @@ const api = {
     usage: (id: string) => ipcRenderer.invoke(IPC.sharedUsage, id) as Promise<IpcResult<number>>
   },
 
-  /* ---------------------------- 系统 VPN --------------------------- */
-  vpn: {
-    /** 列出系统配置的 VPN 连接（来自 Windows 网络设置） */
-    list: () => ipcRenderer.invoke(IPC.vpnList) as Promise<IpcResult<VpnConnection[]>>,
-    connect: (name: string, credentials?: { username: string; password: string }) =>
-      ipcRenderer.invoke(IPC.vpnConnect, name, credentials) as Promise<IpcResult<VpnConnectResult>>,
-    disconnect: (name: string) =>
-      ipcRenderer.invoke(IPC.vpnDisconnect, name) as Promise<IpcResult<VpnConnectResult>>
-  },
-
   /* ------------------- XTerminal 配置导入 -------------------- */
   rdo: { scan: () => ipcRenderer.invoke(IPC.rdoScan) },
   xt: {
@@ -290,6 +294,30 @@ const api = {
   },
 
   /* ---------------------------- 监控指标 --------------------------- */
+  monitoring: {
+    local: () => ipcRenderer.invoke(IPC.monitorLocal),
+    windowsInstallCommand: input => ipcRenderer.invoke(IPC.monitorWindowsCommand, input),
+    exportWindowsInstaller: input => ipcRenderer.invoke(IPC.monitorWindowsBundle,input),
+    configure: input => ipcRenderer.invoke(IPC.monitorConfigure, input),
+    saveEntry: entry => ipcRenderer.invoke(IPC.monitorSaveEntry, entry),
+    removeEntry: id => ipcRenderer.invoke(IPC.monitorRemoveEntry, id),
+    localHistory: id => ipcRenderer.invoke(IPC.monitorLocalHistory, id),
+    nodes: () => ipcRenderer.invoke(IPC.monitorNodes),
+    requestProbe: id => ipcRenderer.invoke(IPC.monitorProbe,id),
+    unclaimed: () => ipcRenderer.invoke(IPC.monitorUnclaimed),
+    claim: id => ipcRenderer.invoke(IPC.monitorClaim,id),
+    test: () => ipcRenderer.invoke(IPC.monitorTest),
+    saveNode: input => ipcRenderer.invoke(IPC.monitorSaveNode, input),
+    prepareAgentNode: id => ipcRenderer.invoke(IPC.monitorPrepareAgentNode, id),
+    removeNode: id => ipcRenderer.invoke(IPC.monitorRemoveNode, id),
+    sessionInfo: id => ipcRenderer.invoke(IPC.monitorSessionInfo, id),
+    agentInstallInfo: id => ipcRenderer.invoke(IPC.monitorAgentInstallInfo, id),
+    installAgent: input => ipcRenderer.invoke(IPC.monitorInstallAgent, input),
+    onAgentInstallProgress: callback => on(IPC.monitorAgentInstallProgress, callback),
+    rotateToken: id => ipcRenderer.invoke(IPC.monitorRotateToken, id),
+    history: (id, hours) => ipcRenderer.invoke(IPC.monitorHistory, id, hours),
+    alerts: () => ipcRenderer.invoke(IPC.monitorAlerts)
+  } satisfies MonitoringApi,
   metrics: {
     probe: (connectionId: string) => ipcRenderer.invoke(IPC.metricsProbe, connectionId),
     collect: (sessionId: string, withProcesses?: boolean) =>

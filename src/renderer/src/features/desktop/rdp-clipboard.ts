@@ -1,5 +1,7 @@
 interface ClipboardOptions {
   canSync(): boolean
+  canReceive?(): boolean
+  canPublishText?(): Promise<boolean>
   readText(): Promise<string>
   writeText(text: string): Promise<void>
   publishText(text: string): Promise<void>
@@ -16,6 +18,7 @@ export function createRdpClipboard(options: ClipboardOptions) {
   let revision = 0
   let queue = Promise.resolve()
   const allowed = () => !disposed && options.canSync()
+  const canReceive = () => !disposed && (options.canReceive?.() ?? options.canSync())
   const enqueue = (action: () => Promise<boolean>) => {
     const result = queue.then(action).catch(() => {
       if (allowed()) options.onError('剪贴板同步未完成，请重新复制后重试；远程会话不受影响。')
@@ -27,7 +30,11 @@ export function createRdpClipboard(options: ClipboardOptions) {
   const sync = (force = false) => {
     const started = revision
     return enqueue(async () => {
-      if (!allowed() || remoteFormats || started !== revision) return false
+      if (!allowed() || started !== revision) return false
+      if (options.canPublishText) {
+        if (!await options.canPublishText() || !allowed() || started !== revision) return false
+        if (remoteFormats) { remoteFormats = false; lastText = undefined; lastRemoteText = undefined }
+      } else if (remoteFormats) return false
       const text = await options.readText()
       if (!allowed() || started !== revision) return false
       if (text.length > 1024 * 1024) { options.onError('剪贴板文本超过 1M 字符，请分段粘贴。'); return false }
@@ -62,14 +69,14 @@ export function createRdpClipboard(options: ClipboardOptions) {
       catch (error) { if (allowed()) options.onError(options.preparePaste && error instanceof Error ? `文件粘贴未完成：${error.message}` : '粘贴未完成，请重试；远程会话不受影响。') }
     },
     receive(text: string): Promise<boolean> {
-      if (!allowed()) return Promise.resolve(false)
+      if (!canReceive()) return Promise.resolve(false)
       remoteFormats = false
       const received = ++revision
       return enqueue(async () => {
-        if (!allowed() || received !== revision) return false
+        if (!canReceive() || received !== revision) return false
         if (text.length > 1024 * 1024) { options.onError('远程剪贴板文本超过 1M 字符，未写入本机。'); return false }
         await options.writeText(text)
-        if (!allowed() || received !== revision) return false
+        if (!canReceive() || received !== revision) return false
         lastText = text
         lastRemoteText = text
         options.onError('')
@@ -77,6 +84,7 @@ export function createRdpClipboard(options: ClipboardOptions) {
       })
     },
     receiveFormats(): void { revision++; remoteFormats = true; lastText = undefined; lastRemoteText = undefined; options.cancelPaste?.() },
+    reset(): void { revision++; remoteFormats = false; lastText = undefined; lastRemoteText = undefined; options.cancelPaste?.() },
     cancelPending(): void { revision++; options.cancelPaste?.() },
     dispose(): void { disposed = true; lastText = undefined; lastRemoteText = undefined; revision++; options.cancelPaste?.() }
   }

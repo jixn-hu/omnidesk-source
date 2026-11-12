@@ -1,6 +1,7 @@
+import type { BackupOptions } from '@shared/backup.js'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import { WebSocket, WebSocketServer } from 'ws'
 import type { Connection, Credential, ConfigurationSummary } from '@shared/types.js'
@@ -13,7 +14,10 @@ import { sharedConfiguration } from '@shared/shared-configuration.js'
 
 const SESSION_REF = 'official-account-session'
 interface LoginSession { token: string; syncKey: string; expiresAt: number; user: NonNullable<OfficialAccountStatus['user']> }
-interface AccountState { serverUrl: string; userId?: string; revision: number; lastSync?: number }
+interface AccountProfile { id: string; serverUrl: string; userId: string; user: NonNullable<OfficialAccountStatus['user']>; revision: number; lastSync?: number }
+interface AccountState { serverUrl: string; userId?: string; revision: number; lastSync?: number; profiles?: AccountProfile[]; serverHistory?: string[] }
+const profileId = (url: string, userId: string) => createHash('sha256').update(url + '\0' + userId).digest('hex')
+const profileRef = (id: string) => SESSION_REF + ':' + id
 interface CloudConfiguration { revision: number; contents: string | null; updatedAt?: number }
 class OfficialRequestError extends Error {
   constructor(readonly status: number, message: string) { super(message) }
@@ -27,6 +31,8 @@ export class OfficialAccountService {
   private transport: OfficialTransport
   private state: AccountState = { serverUrl: '', revision: 0 }
   private busy = false
+  private contextGeneration = 0
+  onContextChanged?: (contextChanged?: boolean) => void
   private gitlabAttempt?: GitlabAttempt
   private relayServer?: Server
   private websocketServer?: WebSocketServer
@@ -53,28 +59,105 @@ export class OfficialAccountService {
 
   private login(): LoginSession | null {
     if (this.vault.status() !== 'unlocked') return null
-    const saved = this.vault.getCredential(SESSION_REF)?.secret
+    const ref = this.state.userId ? profileRef(profileId(this.state.serverUrl, this.state.userId)) : !this.state.profiles ? SESSION_REF : undefined
+    const saved = (ref ? this.vault.getCredential(ref)?.secret : undefined) ?? (!this.state.profiles ? this.vault.getCredential(SESSION_REF)?.secret : undefined)
     if (!saved) return null
     try {
       const session = JSON.parse(saved) as LoginSession & { serverUrl: string }
-      return session.serverUrl === this.state.serverUrl && session.expiresAt > Date.now() ? session : null
+      return session.serverUrl === this.state.serverUrl && (!this.state.userId || session.user?.id === this.state.userId) && session.expiresAt > Date.now() ? session : null
     } catch { return null }
   }
 
+  private serverHistory(current = this.state.serverUrl): string[] {
+    const values = [current, ...(Array.isArray(this.state.serverHistory) ? this.state.serverHistory : []), this.state.serverUrl, ...(this.state.profiles ?? []).map(profile => profile.serverUrl)]
+    const addresses: string[] = []
+    for (const value of values) {
+      try { const address = this.validateUrl(value); if (address && !addresses.includes(address)) addresses.push(address) } catch { /* Ignore malformed historical entries. */ }
+    }
+    return addresses.slice(0, 10)
+  }
+
   status(): OfficialAccountStatus {
-    return { serverUrl: this.state.serverUrl, user: this.login()?.user ?? null, revision: this.state.revision, lastSync: this.state.lastSync }
+    const current = this.login()
+    const profiles = [...(this.state.profiles ?? [])]
+    if (current && !profiles.some(p => p.id === profileId(this.state.serverUrl,current.user.id))) profiles.push({id:profileId(this.state.serverUrl,current.user.id),serverUrl:this.state.serverUrl,userId:current.user.id,user:current.user,revision:this.state.revision,lastSync:this.state.lastSync})
+    return { serverUrl: this.state.serverUrl, serverHistory: this.serverHistory(), user: current?.user ?? null, revision: this.state.revision, lastSync: this.state.lastSync,
+      activeAccountId: this.state.userId || current ? profileId(this.state.serverUrl, this.state.userId ?? current!.user.id) : undefined,
+      accounts: profiles.map(p => { let valid=false; if(this.vault.status()==='unlocked') { try { const raw=this.vault.getCredential(profileRef(p.id))?.secret; valid=!!raw && JSON.parse(raw).expiresAt>Date.now() }catch{} }; return {id:p.id,serverUrl:p.serverUrl,user:p.user,signedIn:valid || !!current && current.user.id===p.userId && this.state.serverUrl===p.serverUrl} }) }
   }
 
   private persist(state: AccountState): void {
+    if (state.userId && state.profiles) state = {...state, profiles:state.profiles.map(p => p.id===profileId(state.serverUrl,state.userId!) ? {...p,revision:state.revision,lastSync:state.lastSync}:p)}
+    state = { ...state, serverHistory: this.serverHistory(state.serverUrl) }
     writeConfigurationFile(this.path, JSON.stringify(state))
     this.state = state
   }
 
   private persistLogin(state: AccountState, session: LoginSession | null): void {
-    const prepared = this.vault.prepareCredentialImport(session ? { [SESSION_REF]: { secret: JSON.stringify({ ...session, serverUrl: state.serverUrl }) } } : {}, session ? [] : [SESSION_REF])
-    writeConfigurationTransaction(this.directory, { 'vault.enc': prepared.contents, 'official-account.json': JSON.stringify(state) })
-    prepared.commit()
-    this.state = state
+    const previous=this.login()
+    const profiles=[...(this.state.profiles ?? [])]
+    const credentials: Record<string, Credential>={}
+    const put=(value:AccountProfile) => { const index=profiles.findIndex(p=>p.id===value.id); if(index<0)profiles.push(value); else profiles[index]=value }
+    if(previous) { const id=profileId(this.state.serverUrl,previous.user.id); put({id,serverUrl:this.state.serverUrl,userId:previous.user.id,user:previous.user,revision:this.state.revision,lastSync:this.state.lastSync}); credentials[profileRef(id)]={secret:JSON.stringify({...previous,serverUrl:this.state.serverUrl})} }
+    const deleted=[SESSION_REF]
+    if(session) { const id=profileId(state.serverUrl,session.user.id); const saved=profiles.find(p=>p.id===id); state={...state,userId:session.user.id,revision:saved?.revision ?? state.revision,lastSync:saved?.lastSync ?? state.lastSync}; put({id,serverUrl:state.serverUrl,userId:session.user.id,user:session.user,revision:state.revision,lastSync:state.lastSync}); credentials[profileRef(id)]={secret:JSON.stringify({...session,serverUrl:state.serverUrl})} }
+    else if(state.userId && state.serverUrl===this.state.serverUrl && state.userId===this.state.userId) { const ref=profileRef(profileId(state.serverUrl,state.userId)); delete credentials[ref]; deleted.push(ref) }
+    const next={...state,profiles,serverHistory:this.serverHistory(state.serverUrl)}
+    const prepared=this.vault.prepareCredentialImport(credentials,deleted)
+    writeConfigurationTransaction(this.directory,{'vault.enc':prepared.contents,'official-account.json':JSON.stringify(next)})
+    prepared.commit(); this.state=next; this.contextGeneration++; this.onContextChanged?.()
+  }
+
+  switchAccount(id: string): Promise<OfficialAccountStatus> {
+    return this.run(async()=>{
+      if(typeof id!=='string') throw new Error('无效账号')
+      const profile=this.state.profiles?.find(p=>p.id===id)
+      if(!profile) throw new Error('账号不存在，请先添加账号')
+      let session:LoginSession|null=null
+      try { const raw=this.vault.getCredential(profileRef(id))?.secret; if(raw) session=JSON.parse(raw) }catch{}
+      // Select the saved profile even without a valid session so it can be reauthenticated.
+      if(!session || !Number.isFinite(session.expiresAt) || session.expiresAt<=Date.now()) session=null
+      this.cancelGitlab(); this.releaseAll()
+      this.persistLogin({...profile,profiles:this.state.profiles},session)
+      return this.status()
+    })
+  }
+
+  removeAccount(id: string): Promise<OfficialAccountStatus> {
+    return this.run(async () => {
+      if (typeof id !== 'string' || !id) throw new Error('无效账号')
+      const status = this.status()
+      const profile = status.accounts?.find(item => item.id === id)
+      if (!profile) throw new Error('账号不存在或已从本机移除')
+      const active = status.activeAccountId === id
+      const next: AccountState = {
+        ...this.state,
+        profiles: (this.state.profiles ?? []).filter(item => item.id !== id),
+        serverHistory: this.serverHistory()
+      }
+      if (active) { delete next.userId; delete next.lastSync; next.revision = 0 }
+      const deleted = [profileRef(id)]
+      // Clear the old single-account session only when it belongs to this profile.
+      try {
+        const raw = this.vault.getCredential(SESSION_REF)?.secret
+        const legacy = raw ? JSON.parse(raw) : null
+        if (legacy?.serverUrl === profile.serverUrl && legacy?.user?.id === profile.user.id) deleted.push(SESSION_REF)
+      } catch { /* An unrelated or invalid legacy session is not this account. */ }
+      const prepared = this.vault.prepareCredentialImport({}, deleted)
+      writeConfigurationTransaction(this.directory, { 'vault.enc': prepared.contents, 'official-account.json': JSON.stringify(next) })
+      prepared.commit(); this.state = next
+      if (active) { this.gitlabAttempt = undefined; this.releaseAll(); this.contextGeneration++ }
+      this.onContextChanged?.(active)
+      return this.status()
+    })
+  }
+
+  monitorContext(): {key:string;url:string;token?:string} | undefined {
+    if(!this.state.serverUrl) return undefined
+    return {key:this.state.userId ? profileId(this.state.serverUrl,this.state.userId) : this.state.serverUrl,url:this.state.serverUrl+'/v1/monitor',token:this.login()?.token}
+  }
+  async monitorRequest<Result>(path:string,method='GET',body?:unknown):Promise<Result> {
+    return this.request('/v1/monitor'+(path==='/healthz' ? path:path.replace(/^\/v1/,'')),method,body)
   }
 
   private async run<Result>(operation: () => Promise<Result>): Promise<Result> {
@@ -88,15 +171,19 @@ export class OfficialAccountService {
     if (!this.state.serverUrl) throw new Error('请先填写并保存账号服务地址')
     const session = this.login()
     if (authenticated && !session) throw new Error('请先登录官方账号')
+    const generation=this.contextGeneration
+    const target=this.state.serverUrl
+    const credentialRef=this.state.userId ? profileRef(profileId(target,this.state.userId)) : SESSION_REF
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), timeoutMs)
     try {
-      const response = await this.transport.request(this.state.serverUrl + path, method, { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(authenticated ? { Authorization: `Bearer ${session!.token}` } : {}) }, body === undefined ? undefined : JSON.stringify(body), controller.signal)
+      const response = await this.transport.request(target + path, method, { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(authenticated ? { Authorization: `Bearer ${session!.token}` } : {}) }, body === undefined ? undefined : JSON.stringify(body), controller.signal)
+      if(generation!==this.contextGeneration) throw new Error('当前账号已切换，请重新操作')
       if (response.status >= 300 && response.status < 400) throw new Error('官方服务返回重定向，请填写最终的 HTTPS 服务地址')
       let result: any
       try { result = JSON.parse(response.contents.toString('utf8')) } catch { throw new Error('官方服务响应无效，请检查服务地址和反向代理配置') }
       if (response.status < 200 || response.status >= 300) {
-        if (response.status === 401 && authenticated && this.vault.status() === 'unlocked') { this.vault.deleteCredential(SESSION_REF); this.releaseAll() }
+        if (response.status === 401 && authenticated && this.vault.status() === 'unlocked') { this.vault.deleteCredential(credentialRef); this.releaseAll(); this.contextGeneration++; this.onContextChanged?.() }
         throw new OfficialRequestError(response.status, typeof result.error === 'string' ? result.error : '官方服务请求失败')
       }
       return result as Result
@@ -112,10 +199,9 @@ export class OfficialAccountService {
       serverUrl = this.validateUrl(serverUrl)
       if (serverUrl !== this.state.serverUrl) {
         this.cancelGitlab()
-        if (this.login()) await this.request('/v1/logout', 'POST', undefined, true, 5000).catch(() => undefined)
         this.releaseAll()
         this.persistLogin({ serverUrl, revision: 0 }, null)
-      }
+      } else this.persist(this.state)
       return this.status()
     })
   }
@@ -127,8 +213,6 @@ export class OfficialAccountService {
       const result = await this.request<LoginSession>('/v1/auth/' + action, 'POST', { username, password }, false)
       if (!result.user?.id || typeof result.token !== 'string' || typeof result.syncKey !== 'string' || !Number.isFinite(result.expiresAt)) throw new Error('官方服务登录响应无效')
       this.releaseAll()
-      const previous = this.login()
-      if (previous) await this.request('/v1/logout', 'POST', undefined, true, 5000).catch(() => undefined)
       this.persistLogin({ serverUrl: this.state.serverUrl, userId: result.user.id, revision: this.state.userId === result.user.id ? this.state.revision : 0, lastSync: this.state.userId === result.user.id ? this.state.lastSync : undefined }, result)
       return this.status()
     })
@@ -152,23 +236,27 @@ export class OfficialAccountService {
     return result
   }
 
-  upload(): Promise<OfficialAccountStatus> {
+  upload(options?: BackupOptions): Promise<OfficialAccountStatus> {
     return this.run(async () => {
       const session = this.login()
       if (!session) throw new Error('请先登录官方账号')
+      let restored: ConfigurationSummary | undefined
+      let currentOptions = options
       for (let attempt = 0; attempt < 3; attempt++) {
         const remote = await this.cloudConfiguration()
         if (remote.contents && remote.revision !== this.state.revision) {
-          const summary = await this.backup.restore(remote.contents, session.syncKey)
+          const summary = await this.backup.restore(remote.contents, session.syncKey, currentOptions)
           if (!summary) throw new Error('已取消云端配置合并，未上传或覆盖云端配置')
+          restored = summary
+          if (summary.preferences && currentOptions) currentOptions = { ...currentOptions, preferences: summary.preferences }
           this.persist({ ...this.state, revision: remote.revision, lastSync: Date.now() })
         }
         // Build the encrypted snapshot after merging, and keep the server revision check for races.
-        const contents = await this.backup.create(session.syncKey)
+        const contents = await this.backup.create(session.syncKey, currentOptions)
         try {
           const result = await this.request<{ revision: number; updatedAt: number }>('/v1/configuration', 'PUT', { revision: remote.revision, contents })
           this.persist({ ...this.state, revision: result.revision, lastSync: result.updatedAt })
-          return this.status()
+          return { ...this.status(), ...(restored ? { restored } : {}) }
         } catch (error) {
           if (!(error instanceof OfficialRequestError) || error.status !== 409) throw error
         }
@@ -177,13 +265,13 @@ export class OfficialAccountService {
     })
   }
 
-  download(): Promise<ConfigurationSummary | null> {
+  download(options?: BackupOptions): Promise<ConfigurationSummary | null> {
     return this.run(async () => {
       const session = this.login()
       if (!session) throw new Error('请先登录官方账号')
       const result = await this.cloudConfiguration()
       if (!result.contents) throw new Error('账号还没有云端配置，请先在有配置的设备上传')
-      const summary = await this.backup.restore(result.contents, session.syncKey)
+      const summary = await this.backup.restore(result.contents, session.syncKey, options)
       if (summary) this.persist({ ...this.state, revision: result.revision, lastSync: Date.now() })
       return summary
     })
@@ -248,7 +336,7 @@ export class OfficialAccountService {
 
   private async preparePublication(connection: Connection, credential: PublishCredential) {
     if (!credential?.secret || !credential.username.trim()) throw new Error('请先补齐服务器账号和凭据，再发布共享')
-    if ((connection.proxy && connection.proxy.type !== 'none') || connection.vpn?.name || (connection.kind === 'ssh' && connection.jump)) throw new Error('请先移除本机代理、VPN 或跳板机依赖，再共享独立连接配置；下载者可在本机单独配置这些选项')
+    if ((connection.proxy && connection.proxy.type !== 'none') || (connection.kind === 'ssh' && connection.jump)) throw new Error('请先移除本机代理或跳板机依赖，再共享独立连接配置；下载者可在本机单独配置这些选项')
     if (connection.kind === 'ssh' && connection.authMethod === 'agent') throw new Error('共享连接需要保存密码或私钥，不能使用本机 SSH Agent')
     const configuration = sharedConfiguration({ ...connection, username: credential.username, domain: credential.domain })
     const metadata = { ...configuration, sharingMode: 'copy', credentialDisclosure: true, configuration }

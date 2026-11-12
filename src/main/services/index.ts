@@ -1,15 +1,19 @@
+import { createBackupModules } from './backup-modules.js'
 /**
  * 服务容器
  *
  * 所有服务在这里实例化并串起来。主进程只依赖这个容器，
  * 不直接 new 具体服务 —— 保证依赖关系集中可查。
  */
-import { app, dialog, net } from 'electron'
+import { app, dialog, net, Notification } from 'electron'
+import { MonitoringService } from './monitoring.js'
+import { MonitorAgentInstaller } from './monitor-agent-installer.js'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { VaultService } from './vault.js'
 import { ConnectionStore } from './connection-store.js'
 import { SshService } from './ssh.js'
+import { DockerService } from './docker.js'
 import { SftpService } from './sftp.js'
 import { RdpProxyService } from './rdp-proxy.js'
 import { FreeRdpService } from './freerdp.js'
@@ -29,7 +33,6 @@ import { CredentialProbeService } from './credential-probe.js'
 import { MetricsService } from './metrics.js'
 import { SettingsService } from './settings.js'
 import { PortForwardService } from './port-forward.js'
-import { VpnService } from './vpn.js'
 import { SharedCredentialStore } from './shared-credentials.js'
 import { resolveConnectionCredential } from './credential-resolver.js'
 import { SETTINGS_FILE } from '@shared/constants.js'
@@ -42,14 +45,16 @@ class ServiceContainer {
   connections!: ConnectionStore
   ssh!: SshService
   sftp!: SftpService
+  docker!: DockerService
   rdp!: RdpProxyService
   freeRdp!: FreeRdpService
   rdpLegacyConsent!: RdpLegacyConsent
   credentialProbe!: CredentialProbeService
+  monitorAgentInstaller!: MonitorAgentInstaller
+  monitoring!: MonitoringService
   metrics!: MetricsService
   settings!: SettingsService
   forwards!: PortForwardService
-  vpn!: VpnService
   sharedCredentials!: SharedCredentialStore
   backup!: ConfigurationBackupService
   webdav!: WebDavSyncService
@@ -105,6 +110,7 @@ class ServiceContainer {
     )
 
     this.sftp = new SftpService(this.ssh)
+    this.docker = new DockerService(this.ssh)
     const rdpCertificates = new RdpCertificateVerifier(userData, async (certificate, signal) => {
       const window = getPrimaryWindow()
       if (!window || window.isDestroyed() || signal.aborted) return 'reject'
@@ -143,10 +149,15 @@ class ServiceContainer {
       })
       return result.response === 1
     })
-    this.freeRdp = new FreeRdpService(app.isPackaged ? join(process.resourcesPath, 'freerdp') : join(app.getAppPath(), 'out/native-freerdp'), rdpCertificates)
+    this.freeRdp = new FreeRdpService(app.isPackaged ? join(process.resourcesPath, 'freerdp') : join(app.getAppPath(), 'out/native-freerdp'), rdpCertificates, undefined, undefined, join(userData, 'logs'))
     this.credentialProbe = new CredentialProbeService(this.connections, this.sharedCredentials, this.vault, this.ssh, this.rdp)
     this.metrics = new MetricsService(this.ssh)
-    this.vpn = new VpnService()
+    this.monitoring = new MonitoringService(userData, this.vault, this.connections, (input, init) => net.fetch(input instanceof URL ? input.href : input, init), message => {
+      if (Notification.isSupported()) new Notification({ title: '服务器到期提醒', body: message }).show()
+    })
+    this.monitoring.setAccountProvider(() => this.account.monitorContext(), <T>(path:string,method?:string,body?:unknown) => this.account.monitorRequest<T>(path,method,body))
+    this.account.onContextChanged = (contextChanged = true) => { if (contextChanged) this.monitoring.accountChanged(); broadcast(IPC.accountChanged,this.account.status()) }
+    this.monitorAgentInstaller = new MonitorAgentInstaller(this.monitoring, this.connections, this.ssh, app.isPackaged ? join(process.resourcesPath, 'monitor-agent') : join(app.getAppPath(), 'out/monitor-agent'), progress => broadcast(IPC.monitorAgentInstallProgress, progress))
     const aiDestination = (connection: import('@shared/types.js').Connection, actualUsername?: string) => {
       const address = parseConnectionAddress(connection.host, connection.port)
       const credential = resolveConnectionCredential(connection, this.sharedCredentials, this.vault)
@@ -156,13 +167,15 @@ class ServiceContainer {
       return `${username}@${address.host.includes(':') ? '[' + address.host + ']' : address.host}:${address.port}`
     }
     this.ai = new AiService(userData, this.connections, this.vault, {
-      execute: (connection, command, signal, beforeExecute, conversationId) => executeAiSsh(this.ssh, this.vault, this.sharedCredentials, this.vpn, connection, command, signal,
+      execute: (connection, command, signal, beforeExecute, conversationId) => executeAiSsh(this.ssh, this.vault, this.sharedCredentials, connection, command, signal,
         username => beforeExecute(aiDestination(connection, username)), conversationId),
-      inspectWindows: (connection, topic, signal, beforeInspect) => inspectAiWindows(this.vault, this.sharedCredentials, this.vpn, connection, topic, signal,
+      inspectWindows: (connection, topic, signal, beforeInspect) => inspectAiWindows(this.vault, this.sharedCredentials, connection, topic, signal,
         username => beforeInspect(aiDestination(connection, username))),
       metadataChanged: () => broadcast(IPC.push.aiMetadataChanged, undefined),
       destination: aiDestination
     })
+    this.backup.onRestored = summary => broadcast(IPC.configurationRestored, summary)
+    this.backup.modules = createBackupModules(userData, this.monitoring, this.ai, this.vault)
     this.ai.on('change', state => broadcast(IPC.push.aiChanged, state))
 
     // 端口转发：规则持久化到独立文件，应用重启后可恢复

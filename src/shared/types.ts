@@ -1,3 +1,4 @@
+import type { BackupOptions, BackupPreferences, BackupSection } from './backup'
 /**
  * 主进程 / 预加载 / 渲染进程共享的类型定义。
  * 这里是唯一的真相来源 —— 任何跨进程的数据结构都必须在此声明。
@@ -90,11 +91,8 @@ export interface ConnectionBase {
    * 这样改一次公共凭据，所有引用它的连接都跟着变。
    */
   sharedCredentialId?: string
-  /**
-   * 连接前需要确保已拨通的系统 VPN。
-   * 与 proxy 的区别：proxy 是这条连接专属的出口，VPN 是系统级的。
-   */
-  vpn?: VpnRequirement
+  /** @deprecated 仅保留旧配置和备份字段；应用不再管理或检查系统 VPN。 */
+  vpn?: { name: string; disconnectAfter?: boolean }
   createdAt: number
   updatedAt: number
 }
@@ -175,6 +173,8 @@ export interface Credential {
 }
 
 export interface ConfigurationSummary {
+  sections?: BackupSection[]
+  preferences?: BackupPreferences
   skipped?: number
   warning?: string
   connections: number
@@ -193,15 +193,18 @@ export interface WebDavConfiguration {
 export type WebDavConfigurationInput = Omit<WebDavConfiguration, 'hasPassword' | 'lastSync'> & { password?: string; clearPassword?: boolean }
 
 export interface ConfigurationApi {
+  onRestored: (callback: (summary: ConfigurationSummary) => void) => () => void
   passwordStatus: () => Promise<IpcResult<boolean>>
   savePassword: (password: string) => Promise<IpcResult<boolean>>
-  exportFile: (password: string) => Promise<IpcResult<{ cancelled: boolean; path?: string }>>
-  importFile: (password: string) => Promise<IpcResult<ConfigurationSummary | null>>
+  exportFile: (password: string, options?: BackupOptions) => Promise<IpcResult<{ cancelled: boolean; path?: string }>>
+  importFile: (password: string, options?: BackupOptions) => Promise<IpcResult<ConfigurationSummary | null>>
+  decryptMonitorData: (password: string) => Promise<IpcResult<{ cancelled: boolean; path?: string }>>
+  exportMonitorData: (password: string) => Promise<IpcResult<{ cancelled: boolean; path?: string }>>
   webdav: () => Promise<IpcResult<WebDavConfiguration>>
   saveWebdav: (configuration: WebDavConfigurationInput) => Promise<IpcResult<WebDavConfiguration>>
   testWebdav: () => Promise<IpcResult<string>>
-  uploadWebdav: (password: string) => Promise<IpcResult<string>>
-  downloadWebdav: (password: string) => Promise<IpcResult<ConfigurationSummary | null>>
+  uploadWebdav: (password: string, options?: BackupOptions) => Promise<IpcResult<string>>
+  downloadWebdav: (password: string, options?: BackupOptions) => Promise<IpcResult<ConfigurationSummary | null>>
 }
 
 /* ------------------------------------------------------------------ */
@@ -261,6 +264,8 @@ export interface TransferTask {
 /* ------------------------------------------------------------------ */
 
 export interface CpuMetrics {
+  steal?: number
+  iowait?: number
   /** 总体使用率 0-100 */
   usage: number
   /** 分核使用率 */
@@ -287,6 +292,7 @@ export interface MemoryMetrics {
 }
 
 export interface DiskMetrics {
+  inodeUsagePercent?: number
   mount: string
   device: string
   fsType: string
@@ -323,6 +329,13 @@ export interface SystemInfo {
 }
 
 export interface ServerMetrics {
+  installationId?: string
+  discoveryDisabled?: boolean
+  publicIP?: {refreshId?:string;ipv4?:string;ipv6?:string;ipv4At?:number;ipv6At?:number;attemptedAt:number;ipv4Failed:boolean;ipv6Failed:boolean}
+  intervalSeconds?: number
+  unavailable?: string[]
+  discovered?: import('./monitoring').MonitorDiscovery
+  diskIO?: { readRate: number; writeRate: number }
   latencyMs?: number
   connectionId: string
   /** 采集时间戳（毫秒） */
@@ -494,44 +507,6 @@ export interface LocalSshKey {
   encrypted: boolean
   /** 是否成功识别为私钥 */
   readable: boolean
-}
-
-/* ------------------------------------------------------------------ */
-/* 系统 VPN                                                            */
-/* ------------------------------------------------------------------ */
-
-/**
- * 系统里配置的 VPN / 拨号连接（来自 Windows「网络和 Internet → VPN」）。
- *
- * 注意与「按连接代理」的区别：
- *   代理    —— 只影响配置了它的那一条连接
- *   系统VPN —— 系统级隧道，拨通后**所有**应用都走它
- *
- * 所以想让某些连接走 VPN，只需拨通系统 VPN；想让单个连接走特定出口，用代理。
- */
-export interface VpnConnection {
-  name: string
-  connected: boolean
-  /** 服务器地址（若能读到） */
-  serverAddress?: string
-}
-
-export interface VpnConnectResult {
-  ok: boolean
-  message: string
-  /** rasdial 的错误编号，便于排查 */
-  code?: string
-}
-
-/**
- * 连接级别的 VPN 前置动作：
- * 连这台机器前，先确保某个系统 VPN 已拨通。
- */
-export interface VpnRequirement {
-  /** 系统 VPN 连接名。留空表示不处理 */
-  name: string
-  /** 是否在断开后自动挂断 VPN（仅在本次连接由本程序拨号时生效） */
-  disconnectAfter?: boolean
 }
 
 /* ------------------------------------------------------------------ */

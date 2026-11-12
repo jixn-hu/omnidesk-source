@@ -1,41 +1,45 @@
-# 从源码构建 OmniDesk
+# 从源码构建 OmniDesk 0.6.43
 
-当前版本：0.6.15。客户端以 MIT 开源；第三方依赖遵循各自许可证，见 [第三方说明](../THIRD_PARTY_NOTICES.md)。
+## 环境与开发
 
-## 开发环境
+- Node.js 22+、npm、Git。
+- Go 1.26+：默认构建会编译 Linux amd64、Linux arm64 和 Windows amd64 监控采集端。Go 依赖从公开模块源获取。
+- Windows 原生桌面另需 MSYS2 UCRT64、GCC、OpenSSL、zlib 和 CMake，见 [FreeRDP 说明](FREERDP.md)。
 
-- 推荐 Windows x64、Node.js 22 LTS、npm 与 Git。
-- Windows 原生 RDP 需要 MSYS2 UCRT64 的 GCC、OpenSSL、zlib 和 CMake，详细命令与固定上游版本见 [FreeRDP 构建说明](FREERDP.md)。
-- Node.js 依赖与原生运行库需要联网从各自公开上游获取；仓库不包含生成的二进制、个人配置或账号后台源码。
-
-```powershell
-git clone https://github.com/jixn-hu/omnidesk-source.git
-cd omnidesk-source
+~~~powershell
 npm ci
 npm run typecheck
 npm run build
 npm run dev
-```
+~~~
 
-上述前端 / 主进程构建无需 MSYS2。要在开发模式连接 Windows 内置桌面，先完成原生构建；SSH、SFTP 与界面开发不依赖原生 RDP 工具链。RDP 的兼容 WASM 依赖由锁文件固定，构建前自动检查摘要。
+采集端源码在 monitor-agent/，构建脚本默认使用这个目录。OMNIDESK_MONITOR_SOURCE 可覆盖源码目录。该目录只包含采集端、协议定义和相关单元测试，不依赖账号或监控服务端。npm run build 会检查固定 RDP WASM 摘要并构建主进程、preload 与界面；不需要连接任何真实服务器。
+
+npm ci 默认运行依赖自己的安装脚本。源码审查或只进行构建验证时可使用 npm ci --ignore-scripts；此时 Electron 运行时未下载，启动和打包前需显式完成 Electron 安装。
 
 ## Windows 安装包
 
-在 MSYS2 UCRT64 安装构建依赖后，从 PowerShell 执行：
-
-```powershell
+~~~powershell
 npm run build:freerdp
 npm run build
 npx electron-builder --win --x64 --publish never
 node tools/verify-release.cjs
-```
+~~~
 
-默认 MSYS2 前缀为 `C:/msys64/ucrt64`，可用 `OMNIDESK_MSYS2`、`OMNIDESK_OPENSSL_ROOT`、`OMNIDESK_CMAKE` 指定本机工具位置。FreeRDP 源码固定为 3.32.2，构建脚本检查 Git 提交和工作区状态，并收集 DLL、许可证与摘要。
+FreeRDP 固定上游 3.32.2。工具链位置可通过 OMNIDESK_MSYS2、OMNIDESK_OPENSSL_ROOT 和 OMNIDESK_CMAKE 配置。输出在 release/0.6.43/，不要将 out/、tmp/、release/ 或个人配置提交。
 
-输出在 `release/0.6.15/`；`out/`、`tmp/`、`release/` 均不提交。安装包保持 `cn.omnidesk.app` 应用标识和既有用户数据路径；开发验证请使用隔离 profile。现有正式安装包未做代码签名。
+源码中的公开快照调整了采集端构建目录、关闭 Go VCS 元数据写入，并补充独立测试初始化和文档；客户端运行源码和原生辅助源码与 0.6.43 已验证安装包对应。不同编译器、Go / Electron 版本及构建元数据可能产生不同的二进制摘要。
 
-## 测试
+## 验证
 
-`tools/verify-*.cjs` 提供服务、协议与界面验证；不同脚本对 Windows、已构建原生组件、回环服务或 Playwright 有不同要求。界面验证可以单独安装 Playwright 并用 `NODE_PATH` 指向它，再用 `OMNIDESK_QA_EXE` 指向隔离测试包。请先阅读脚本及 [0.6.15 验证记录](VALIDATION-0.6.15.md)，不要用真实连接、账号或剪贴板内容代替测试夹具。
+~~~powershell
+npm run typecheck
+node tools/verify-docker.cjs
+cd monitor-agent
+go test ./cmd/agent ./internal/agent ./protocol
+cd ..
+~~~
 
-账号 / 配置同步连接用户自行配置的独立后台；服务地址默认留空。本仓库不包含可部署的官方账号后台，普通 SSH / RDP 连接不要求注册账号。
+Docker 服务测试在 Windows 上默认使用 Git for Windows 的 Bash，可通过 OMNIDESK_QA_BASH 指定本地 POSIX shell。它启动回环 SSH peer 和假 Docker CLI，不访问真实 Docker daemon。
+
+界面测试 tools/verify-docker-ui.cjs 另需 Playwright 与可启动的 Electron。可在单独目录安装 Playwright，通过 NODE_PATH 引用，再将 OMNIDESK_QA_EXE 指向已构建的 OmniDesk.exe。测试使用隔离用户目录和合成数据。其他 verify 脚本可能需要 Windows 原生运行库、指定平台或相应工具，请先阅读脚本及 [验证记录](VALIDATION-0.6.43.md)。

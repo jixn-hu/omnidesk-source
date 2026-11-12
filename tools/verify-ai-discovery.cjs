@@ -24,7 +24,7 @@ const until = async (predicate,label='idle') => { const end=Date.now()+20000; wh
 const idle = async () => { await until(()=>ai.state().status==='idle'); assert.deepEqual(failures,[]) }
 async function run(steps, ids=[], text='QA discovery task') {
  let index=0; handler=body=>{ assert(index<steps.length,'unexpected model request');const step=steps[index++]; return typeof step==='function'?step(body):step }
- ai.send(text,ids);await idle();assert.equal(index,steps.length)
+ await ai.send(text,ids);await idle();assert.equal(index,steps.length)
 }
 const options={ execute:async()=>{ executionCount++;throw new Error('metadata tasks must not connect') } }
 async function main() {
@@ -47,11 +47,16 @@ async function main() {
   collected.push(...result.servers.map(item=>item.id));pages++
   return result.nextOffset===null?done('All 245 servers read'):tool('list_servers',{offset:result.nextOffset})
  }
- ai.send('查看所有服务器的信息',[]);await idle()
+ await ai.send('查看所有服务器的信息',[]);await idle()
  assert.equal(new Set(collected).size,245);assert.equal(collected.length,245);assert(pages>5)
  assert.deepEqual(ai.state().selectedIds,[]);assert.equal(ai.state().scopeCount,245)
  await run([tool('list_servers',{query:'192.0.2.1:22 生产'}),body=>{const result=latest(body);assert.equal(result.total,1);assert.equal(result.servers[0].id,records[0].id);assert.equal(result.servers[0].address,'192.0.2.1:22');return done('Found by address/tag')}])
- await run([tool('update_metadata',{server_ids:[records[0].id],changes:{note:{mode:'replace',value:'must be denied'}}}),body=>{assert.match(latest(body).error,/权限/);return done('Read permission denied write')}])
+ let readStep=0
+ handler=()=>readStep++===0?tool('update_metadata',{server_ids:[records[0].id],changes:{note:{mode:'replace',value:'needs confirmation'}}}):done('Read permission declined write')
+ await ai.send('QA read mode mutation proposal',[])
+ await until(()=>ai.state().pending?.kind==='edit','read mutation approval')
+ assert.equal(connections.get(records[0].id).note,'x'.repeat(7500))
+ ai.confirm(ai.state().pending.id,false);await idle()
  assert.equal(connections.get(records[0].id).note,'x'.repeat(7500))
  ai.setPermissionMode('edit')
  const unrelated=connections.get(records[1].id)
@@ -68,7 +73,7 @@ async function main() {
   if(result.servers){assert.equal(result.total,2);return tool('ask_user',{title:'确认目标服务器',message:'同名服务器有 192.0.2.2 和 192.0.2.3。是否仅修改 192.0.2.2？'})}
   assert.equal(result.confirmed,true);return done('Target confirmed without selecting in sidebar')
  }
- ai.send('QA ambiguous target',[]);await until(()=>ai.state().pending)
+ await ai.send('QA ambiguous target',[]);await until(()=>ai.state().pending)
  assert.equal(ai.state().pending.kind,'question');ai.confirm(ai.state().pending.id,true);await idle()
  // Unrelated concurrent edits do not break catalog discovery; target revisions remain protected.
  await run([tool('list_servers',{query:records[0].host}),body=>{const item=connections.get(records[0].id);connections.batchMetadata({items:[{id:item.id,updatedAt:item.updatedAt}],changes:{note:{mode:'replace',value:'QA external edit'}}});return tool('update_metadata',{server_ids:[item.id],changes:{note:{mode:'replace',value:'stale mutation'}}})},body=>{assert.match(latest(body).error,/其他操作修改/);return tool('list_servers',{query:records[0].host})},body=>{assert.equal(latest(body).servers[0].note,'QA external edit');return done('Fresh read after concurrent edit')}])

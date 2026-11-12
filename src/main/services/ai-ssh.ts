@@ -3,15 +3,12 @@ import type { SessionInfo, SshConnection, ExecResult } from '@shared/types.js'
 import type { SshService } from './ssh.js'
 import type { VaultService } from './vault.js'
 import type { SharedCredentialStore } from './shared-credentials.js'
-import type { VpnService } from './vpn.js'
 import { resolveConnectionCredential } from './credential-resolver.js'
 import { redactAiText } from './ai-tools.js'
 
-export async function executeAiSsh(ssh: SshService, vault: VaultService, shared: SharedCredentialStore, vpn: VpnService,
+export async function executeAiSsh(ssh: SshService, vault: VaultService, shared: SharedCredentialStore,
   connection: SshConnection, command: string, signal: AbortSignal, beforeExecute?: (username: string) => void, conversationId?: string): Promise<ExecResult> {
   if (vault.status() !== 'unlocked') throw new Error('请先解锁本机保险箱')
-  signal.throwIfAborted()
-  if (connection.vpn?.name && !await vpn.isConnected(connection.vpn.name)) throw new Error('请先连接该服务器要求的系统 VPN，再重试')
   signal.throwIfAborted()
   const credential = resolveConnectionCredential(connection, shared, vault)
   const jump = connection.jump?.credentialRef ? vault.getCredential(connection.jump.credentialRef) : null

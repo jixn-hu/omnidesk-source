@@ -471,7 +471,7 @@ export class SshService extends EventEmitter {
    * 执行一条命令并收集输出。
    * 与交互式 shell 用同一条连接，所以环境变量、工作目录等状态共享。
    */
-  async exec(sessionId: string, command: string, opts: ExecOptions = {}): Promise<ExecResult> {
+  async exec(sessionId: string, command: string, opts: ExecOptions & { stdin?: string } = {}): Promise<ExecResult> {
     const session = this.requireSession(sessionId)
     const started = Date.now()
     const timeoutMs = opts.timeoutMs ?? EXEC_LIMITS.timeoutMs
@@ -562,6 +562,8 @@ export class SshService extends EventEmitter {
           clearTimeout(timer)
           reject(error)
         })
+        // Send ephemeral input on the encrypted channel, never in command arguments.
+        if (opts.stdin !== undefined) stream.end(opts.stdin)
       })
     })
   }

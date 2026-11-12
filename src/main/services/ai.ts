@@ -44,7 +44,9 @@ class AiConversation extends EventEmitter {
   private value: AiConversationState = { status: 'idle', messages: [], pending: null, selectedIds: [], scopeMode: 'all', scopeCount: 0, permissionMode: 'read', modelCalls: 0, maxModelCalls: AI_DEFAULT_MAX_MODEL_CALLS }
   private history: ChatMessage[] = []
   private controller?: AbortController
-  private approval?: { id: string; resolve: (outcome: Exclude<AiApprovalOutcome, 'pending'>) => void; expiresAt: number }
+  private approval?: { id: string; resolve: (outcome: Exclude<AiApprovalOutcome, 'pending'>) => void; expiresAt?: number }
+  private running?: Promise<void>
+  private continuing = false
   private testing = false
   private createdThisTurn = 0
   private historyTrimmed = false
@@ -98,13 +100,12 @@ class AiConversation extends EventEmitter {
     this.history = []
     return this.configuration()
   }
-  busy(): boolean { return !!this.controller || this.testing }
-  applyConfiguration(configuration: AiConfiguration): void {
+  busy(): boolean { return !!this.controller || this.continuing || this.testing }
+  applyConfiguration(configuration: AiConfiguration, preserveHistory = false): void {
     this.configurationValue = { baseUrl: configuration.baseUrl, model: configuration.model, maxModelCalls: configuration.maxModelCalls, permissionMode: configuration.permissionMode }
     this.value.maxModelCalls = configuration.maxModelCalls
     this.value.modelCalls = 0
-    this.history = []
-    this.historyTrimmed = false
+    if (!preserveHistory) { this.history = []; this.historyTrimmed = false }
   }
   setPermissionMode(mode: AiPermissionMode): void {
     this.requireUnlocked()
@@ -118,8 +119,7 @@ class AiConversation extends EventEmitter {
   }
   private allowed(name: string): boolean {
     if (['ask_user', 'list_servers', 'inspect_linux', 'inspect_windows'].includes(name)) return true
-    if (['create_server', 'update_metadata'].includes(name)) return this.value.permissionMode !== 'read'
-    return this.value.permissionMode === 'full' && ['delete_server', 'run_ssh'].includes(name)
+    return ['create_server', 'update_metadata', 'delete_server', 'run_ssh'].includes(name)
   }
   private compactHistory(): void {
     while (this.history.length > 160 || JSON.stringify(this.history).length > 300000) {
@@ -217,9 +217,9 @@ class AiConversation extends EventEmitter {
     return { role: 'assistant', content: result.content ? this.clean(result.content) : null,
       ...(calls?.length ? { tool_calls: calls.map((call: ToolCall) => ({ id: call.id, type: 'function', function: { name: call.function.name, arguments: call.function.arguments } })) } : {}) }
   }
-  send(text: string, ids: string[]): AiConversationState {
+  async send(text: string, ids: string[]): Promise<AiConversationState> {
     this.requireUnlocked()
-    if (this.controller || this.testing) throw new Error('请先完成或停止当前 AI 任务')
+    if (this.continuing || this.testing || this.controller && !this.approval) throw new Error('请先完成或停止当前 AI 任务')
     if (typeof text !== 'string' || !text.trim() || text.length > 12000) throw new Error('请输入 1–12000 字的任务说明')
     if (!Array.isArray(ids) || ids.length > 200 || ids.some(id => typeof id !== 'string') || new Set(ids).size !== ids.length) throw new Error('手动限定范围时，最多选择 200 台本机服务器；不勾选则可检索全部本机服务器')
     if (!this.configurationValue.baseUrl || !this.configurationValue.model) throw new Error('请先配置 AI 接口地址和模型')
@@ -229,6 +229,15 @@ class AiConversation extends EventEmitter {
       if (!connection) throw new Error('所选服务器已不存在，请刷新列表')
       return [id, connection.updatedAt] as const
     }))
+    if (this.approval) {
+      this.continuing = true
+      try {
+        this.controller?.abort('superseded')
+        this.approval.resolve('superseded')
+        // Finish every outstanding tool result before adding the next user turn.
+        await this.running
+      } finally { this.continuing = false }
+    }
     if ([...ids].sort().join(',') !== [...this.value.selectedIds].sort().join(',')) {
       this.history = []
       if (this.value.messages.length) this.message('activity', '服务器范围已变化，模型上下文已重新开始')
@@ -246,7 +255,7 @@ class AiConversation extends EventEmitter {
     this.controller = controller
     this.message('user', text.trim())
     this.history.push({ role: 'user', content: this.clean(text.trim()) })
-    void this.run(scope, controller)
+    this.running = this.run(scope, controller)
     return this.state()
   }
   private target(id: unknown, scope: Map<string, number>): Connection {
@@ -260,11 +269,11 @@ class AiConversation extends EventEmitter {
     return this.options.destination?.(connection) ?? `${connection.username}@${connection.host}:${connection.port}`
   }
   private async requestApproval(request: AiApprovalRequest): Promise<boolean> {
-    const pending: AiApproval = { ...request, id: randomUUID(), expiresAt: Date.now() + (this.options.approvalTimeoutMs ?? 300000) }
+    const pending: AiApproval = { ...request, id: randomUUID(), ...(this.options.approvalTimeoutMs === undefined ? {} : { expiresAt: Date.now() + this.options.approvalTimeoutMs }) }
     this.value.pending = pending
     this.value.status = 'approval'
     return new Promise<boolean>(resolve => {
-      const timer = setTimeout(() => finish('expired'), Math.max(1, pending.expiresAt - Date.now()))
+      const timer = pending.expiresAt === undefined ? undefined : setTimeout(() => finish('expired'), Math.max(1, pending.expiresAt - Date.now()))
       const finish = (outcome: Exclude<AiApprovalOutcome, 'pending'>) => {
         if (this.approval?.id !== pending.id) return
         clearTimeout(timer)
@@ -282,7 +291,7 @@ class AiConversation extends EventEmitter {
   }
   confirm(id: string, approved: boolean): boolean {
     this.requireUnlocked()
-    if (typeof id !== 'string' || typeof approved !== 'boolean' || !this.approval || this.approval.id !== id || this.approval.expiresAt <= Date.now() || this.controller?.signal.aborted) return false
+    if (typeof id !== 'string' || typeof approved !== 'boolean' || !this.approval || this.approval.id !== id || (this.approval.expiresAt !== undefined && this.approval.expiresAt <= Date.now()) || this.controller?.signal.aborted) return false
     this.approval.resolve(approved ? 'confirmed' : 'cancelled')
     return true
   }
@@ -301,7 +310,7 @@ class AiConversation extends EventEmitter {
   }
   private async tool(call: ToolCall, scope: Map<string, number>, signal: AbortSignal, denied: Set<string>, unavailable: Map<string, string>): Promise<unknown> {
     signal.throwIfAborted()
-    if (!this.allowed(call.function.name)) throw new Error('当前权限模式不允许该操作，请由用户切换权限模式后重新发起任务')
+    if (!this.allowed(call.function.name)) throw new Error('当前权限模式不允许该操作，该工具未开放')
     const input = JSON.parse(call.function.arguments)
     if (call.function.name === 'ask_user') {
       const args = object(input, ['title', 'message'])
@@ -340,6 +349,18 @@ class AiConversation extends EventEmitter {
       if (args.tags !== undefined) changes.tags = { mode: args.tags.length ? 'replace' : 'clear', values: args.tags }
       for (const key of ['note', 'group'] as const) if (args[key] !== undefined) changes[key] = { mode: args[key] === '' ? 'clear' : 'replace', value: args[key] }
       const metadata = Object.keys(changes).length ? applyMetadataChanges({}, changes) : {}
+      if (this.value.permissionMode === 'read') {
+        const approved = await this.requestApproval({ kind: 'edit', title: '新增服务器资料', message: this.clean(`协议：${args.kind.toUpperCase()}
+名称：${args.name}
+地址：${args.host}:${args.port}
+账号：${args.username.trim()}
+分组：${metadata.group || '未分组'}
+标签：${metadata.tags?.join('、') || '无'}
+备注：${metadata.note || '无'}`) })
+        signal.throwIfAborted()
+        this.requireUnlocked()
+        if (!approved) return { rejected: true, reason: '用户拒绝或确认超时，未新增服务器资料' }
+      }
       const connection = this.connections.save({ kind: args.kind, name: args.name, host: args.host, port: args.port, username: args.username.trim(), authMethod: 'password', ...metadata })
       scope.set(connection.id, connection.updatedAt)
       this.createdThisTurn++
@@ -353,7 +374,7 @@ class AiConversation extends EventEmitter {
       const connection = this.target(args.server_id, scope)
       const denialKey = 'delete:' + connection.id
       if (denied.has(denialKey)) return { rejected: true, reason: '用户已拒绝删除此服务器资料，不能重试' }
-      const approved = await this.requestApproval({ kind: 'delete', serverId: connection.id, serverName: connection.name, destination: `${connection.host}:${connection.port}` })
+      const approved = this.value.permissionMode === 'full' || await this.requestApproval({ kind: 'delete', serverId: connection.id, serverName: connection.name, destination: `${connection.host}:${connection.port}` })
       signal.throwIfAborted()
       if (!approved) { denied.add(denialKey); return { rejected: true, reason: '用户拒绝或确认超时，未删除服务器资料' } }
       this.target(connection.id, scope)
@@ -367,7 +388,18 @@ class AiConversation extends EventEmitter {
     if (call.function.name === 'update_metadata') {
       const args = object(input, ['server_ids', 'changes'])
       if (!Array.isArray(args.server_ids) || !args.server_ids.length || args.server_ids.length > 200) throw new Error('请选择要更新的服务器')
-      const items = args.server_ids.map((id: unknown) => this.target(id, scope))
+      const items: Connection[] = [...new Set(args.server_ids)].map(id => this.target(id, scope))
+      const changes = args.changes as MetadataChanges
+      const previews = items.map(item => ({ item, next: applyMetadataChanges(item, changes) }))
+      if (this.value.permissionMode === 'read') {
+        const names = { tags: '标签', note: '备注', group: '分组' }
+        const format = (value: unknown) => Array.isArray(value) ? value.join('、') || '无' : String(value || '无')
+        const message = previews.map(({ item, next }) => `${item.name} · ${item.host}:${item.port}\n` + (Object.keys(next) as (keyof MetadataChanges)[]).map(key => `${names[key]}：${format(item[key])} → ${format(next[key])}`).join('\n')).join('\n\n')
+        const approved = await this.requestApproval({ kind: 'edit', title: `修改 ${items.length} 台服务器资料`, message: this.clean(message) })
+        signal.throwIfAborted()
+        if (!approved) return { rejected: true, reason: '用户拒绝或确认超时，未修改服务器资料' }
+        for (const item of items) this.target(item.id, scope)
+      }
       this.connections.batchMetadata({ items: items.map((item: Connection) => ({ id: item.id, updatedAt: item.updatedAt })), changes: args.changes as MetadataChanges })
       for (const item of items) scope.set(item.id, this.connections.get(item.id)!.updatedAt)
       this.options.metadataChanged?.()
@@ -408,14 +440,14 @@ class AiConversation extends EventEmitter {
       command = args.command
       const key = connection.id + '\0' + command
       if (denied.has(key)) return { rejected: true, reason: '用户已拒绝该命令，不能重试' }
-      const approved = await this.requestApproval({ kind: 'ssh', serverId: connection.id, serverName: connection.name, destination, command, reason: this.clean(args.reason) })
+      const approved = this.value.permissionMode === 'full' || await this.requestApproval({ kind: 'ssh', serverId: connection.id, serverName: connection.name, destination, command, reason: this.clean(args.reason) })
       signal.throwIfAborted()
       if (!approved) { denied.add(key); return { rejected: true, reason: '用户拒绝或确认超时，未执行任何命令' } }
       this.target(connection.id, scope)
       if (this.destination(connection) !== destination) throw new Error('服务器登录账号已变化，请重新发起任务并确认')
     }
     signal.throwIfAborted()
-    this.message('activity', `${query ? '只读查询' : '已确认执行'} · ${connection.name}\n${command}`)
+    this.message('activity', `${query ? '只读查询' : this.value.permissionMode === 'full' ? '自动执行' : '已确认执行'} · ${connection.name}\n${command}`)
     return this.options.execute(connection, command, signal, actualDestination => {
       signal.throwIfAborted()
       this.target(connection.id, scope)
@@ -455,7 +487,7 @@ class AiConversation extends EventEmitter {
         for (const call of response.tool_calls) {
           let result: unknown
           try { result = questionCancelled ? { rejected: true, skipped: true, reason: '用户已取消本轮确认，未执行后续操作' } : await this.tool(call, scope, signal, denied, unavailable) }
-          catch (error) { result = { error: signal.aborted ? '用户已停止任务，操作取消' : this.clean(error instanceof Error ? error.message : 'AI 工具执行失败') } }
+          catch (error) { result = { error: signal.aborted ? signal.reason === 'superseded' ? '用户已发送新要求，此操作未执行；请按新消息重新处理，旧确认不能复用' : '用户已停止任务，操作取消' : this.clean(error instanceof Error ? error.message : 'AI 工具执行失败') } }
           if (call.function.name === 'ask_user' && (result as any)?.rejected) questionCancelled = true
           const serialized = JSON.stringify(result, (_key, value) => typeof value === 'string' ? this.clean(value) : value)
           const contents = serialized.length <= 40000 ? serialized : JSON.stringify({ truncated: true, preview: serialized.slice(0, 36000), hint: '结果较长，已截断。请缩小查询范围，或用名称/标签筛选服务器后继续。' })
@@ -474,6 +506,7 @@ class AiConversation extends EventEmitter {
             this.message('activity', report, !!output?.error || typeof output?.code === 'number' && output.code !== 0)
           }
         }
+        signal.throwIfAborted()
         if (questionCancelled) {
           const decision = [...this.value.messages].reverse().find(message => message.approval?.kind === 'question')?.approval
           this.message('assistant', decision?.outcome === 'expired' ? '确认已超时，本轮后续操作未执行。需要继续时，请重新发起任务。' : '已取消，本轮后续操作未执行。你可以调整要求后重新开始。')
@@ -481,7 +514,7 @@ class AiConversation extends EventEmitter {
         }
       }
     } catch (error) {
-      this.message('activity', signal.aborted ? '已停止任务。未确认的命令不会执行；已经执行的命令不会自动回滚。' : error instanceof Error ? error.message : 'AI 任务失败', !signal.aborted)
+      this.message('activity', signal.aborted ? signal.reason === 'superseded' ? '已按新消息结束上一轮等待，未确认的操作未执行。' : '已停止任务。未确认的命令不会执行；已经执行的命令不会自动回滚。' : error instanceof Error ? error.message : 'AI 任务失败', !signal.aborted)
     } finally {
       this.approval?.resolve('stopped')
       if (this.controller === controller) {
@@ -573,6 +606,60 @@ export class AiService extends EventEmitter {
       this.publish()
     })
   }
+  private requireBackupIdle(): void {
+    this.restoreConversations()
+    if (this.storageError) throw new Error(this.storageError)
+    if ([...this.conversations.values()].some(item => item.session.busy() || item.session.state().pending)) throw new Error('请先完成或停止所有 AI 任务，再备份或恢复 AI 数据')
+  }
+  backupHistory(): unknown {
+    this.requireBackupIdle()
+    return { version: 1, activeId: this.activeId, items: [...this.conversations.values()].map(item => ({ id: item.session.id, title: item.title, unread: item.unread, updatedAt: item.updatedAt, snapshot: item.session.snapshot() })) }
+  }
+  prepareBackup(settings: any, history: any, ids: Map<string, string>): { files: Record<string, string>; baseUrl: string; commit(): void } {
+    this.requireBackupIdle()
+    const files: Record<string, string> = {}
+    let configuration = this.configuration()
+    if (settings !== undefined) {
+      if (!settings || typeof settings.baseUrl !== 'string' || settings.baseUrl.length > 2048 || typeof settings.model !== 'string' || settings.model.length > 256 || /[\0\r\n]/.test(settings.model) || !Number.isInteger(settings.maxModelCalls) || settings.maxModelCalls < 1 || settings.maxModelCalls > AI_MAX_MODEL_CALLS || !aiPermissionModes.some(mode => mode.value === settings.permissionMode)) throw new Error('AI 配置备份格式不正确')
+      if (settings.baseUrl) endpoint(settings.baseUrl)
+      configuration = { baseUrl: settings.baseUrl.replace(/\/$/, ''), model: settings.model, maxModelCalls: settings.maxModelCalls, permissionMode: settings.permissionMode, hasApiKey: false }
+      const { hasApiKey, ...saved } = configuration
+      files['ai-settings.json'] = JSON.stringify(saved)
+    }
+    if (history !== undefined) {
+      if (!history || history.version !== 1 || !Array.isArray(history.items) || history.items.length > 30 || new Set(history.items.map((item: any) => item?.id)).size !== history.items.length) throw new Error('AI 对话备份格式不正确')
+      const imported = history.items.map((item: any) => {
+        if (!item || typeof item.id !== 'string' || !/^[0-9a-f-]{36}$/.test(item.id) || typeof item.title !== 'string' || item.title.length > 100 || !Number.isFinite(item.updatedAt)) throw new Error('AI 对话备份格式不正确')
+        const snapshot = structuredClone(item.snapshot) as ConversationSnapshot
+        if (!Array.isArray(snapshot?.history) || snapshot.history.length > 2400 || !Array.isArray(snapshot.value?.messages) || !Array.isArray(snapshot.value.selectedIds)) throw new Error('AI 对话备份格式不正确')
+        for (const message of snapshot.value.messages) {
+          if (!message || typeof message.id !== 'string' || !['user', 'assistant', 'activity', 'approval'].includes(message.role) || typeof message.text !== 'string' || !Number.isFinite(message.at)) throw new Error('AI 消息备份格式不正确')
+        }
+        for (const message of snapshot.history) {
+          if (!message || !['system', 'user', 'assistant', 'tool'].includes(message.role) || message.content !== null && typeof message.content !== 'string' || message.tool_calls !== undefined && (!Array.isArray(message.tool_calls) || message.tool_calls.some(call => !call || typeof call.id !== 'string' || call.type !== 'function' || typeof call.function?.name !== 'string' || typeof call.function.arguments !== 'string'))) throw new Error('AI 上下文备份格式不正确')
+        }
+        if (snapshot.value.selectedIds.some(id => typeof id !== 'string')) throw new Error('AI 服务器范围格式不正确')
+        const selectedIds = snapshot.value.selectedIds.map(id => ids.get(id)).filter((id): id is string => !!id)
+        const session = new AiConversation(this.directory, this.connections, this.vault, this.options, item.id)
+        try {
+          session.restore(snapshot)
+          const clean = session.snapshot()
+          clean.value.selectedIds = selectedIds
+          return { id: item.id, title: item.title, unread: !!item.unread, updatedAt: item.updatedAt, snapshot: clean }
+        } finally { session.dispose() }
+      })
+      const local = (this.backupHistory() as { items: any[] }).items.filter(item => !imported.length || item.title !== '新对话' || item.snapshot.value.messages.length || item.snapshot.history.length)
+      const items = [...new Map([...local, ...imported].map(item => [item.id, item])).values()]
+      if (items.length > 30) throw new Error('合并后 AI 对话超过 30 个，请先清理不再需要的本机对话')
+      files[CONVERSATIONS_FILE] = this.vault.sealLocalData(JSON.stringify({ version: 1, activeId: this.activeId, items }), CONVERSATIONS_CONTEXT)
+    }
+    return { files, baseUrl: configuration.baseUrl, commit: () => {
+      clearTimeout(this.saveTimer)
+      if (history !== undefined) { this.restored = false; this.restoreConversations() }
+      if (settings !== undefined) for (const { session } of this.conversations.values()) session.applyConfiguration(configuration, true)
+      this.publish()
+    } }
+  }
   configuration(): AiConfiguration { return this.session().configuration() }
   saveConfiguration(input: AiConfigurationInput): AiConfiguration {
     if ([...this.conversations.values()].some(item => item.session.busy())) throw new Error('请先完成或停止所有对话中的 AI 任务，再修改配置')
@@ -620,9 +707,9 @@ export class AiService extends EventEmitter {
     return this.state()
   }
   setPermissionMode(mode: AiPermissionMode, id?: string): AiState { this.session(id).setPermissionMode(mode); return this.state() }
-  send(text: string, ids: string[], id?: string): AiState {
+  async send(text: string, ids: string[], id?: string): Promise<AiState> {
     const session = this.session(id)
-    session.send(text, ids)
+    await session.send(text, ids)
     const item = this.conversations.get(session.id)!
     if (item.title === '新对话') item.title = text.trim().replace(/\s+/g, ' ').slice(0, 28)
     this.publish()

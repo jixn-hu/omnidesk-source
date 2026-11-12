@@ -5,7 +5,6 @@ import type { ExecResult, RdpConnection } from '@shared/types.js'
 import { parseConnectionAddress } from '@shared/connection-identity.js'
 import type { VaultService } from './vault.js'
 import type { SharedCredentialStore } from './shared-credentials.js'
-import type { VpnService } from './vpn.js'
 import { resolveConnectionCredential } from './credential-resolver.js'
 import { redactAiText, windowsQueries, type WindowsTopic } from './ai-tools.js'
 
@@ -71,15 +70,13 @@ function checkRpc(host: string, signal: AbortSignal): Promise<void> {
   })
 }
 
-export async function inspectAiWindows(vault: VaultService, shared: SharedCredentialStore, vpn: VpnService,
+export async function inspectAiWindows(vault: VaultService, shared: SharedCredentialStore,
   connection: RdpConnection, topic: WindowsTopic, signal: AbortSignal, beforeInspect: (username: string) => void): Promise<ExecResult> {
   if (vault.status() !== 'unlocked') throw new Error('请先解锁本机保险箱')
   signal.throwIfAborted()
   if (process.platform !== 'win32') throw new Error('Windows WMI 查询需要在 Windows 客户端运行')
   if (!Object.hasOwn(windowsQueries, topic)) throw new Error('请选择受支持的 Windows 只读查询')
   if (connection.proxy && connection.proxy.type !== 'none') throw new Error('Windows WMI 查询不支持 RDP 连接代理，请使用可直连目标管理通道的网络')
-  if (connection.vpn?.name && !await vpn.isConnected(connection.vpn.name)) throw new Error('请先连接该服务器要求的系统 VPN，再重试')
-  signal.throwIfAborted()
   const { host } = parseConnectionAddress(connection.host, connection.port)
   await checkRpc(host, signal)
   signal.throwIfAborted()

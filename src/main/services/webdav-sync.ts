@@ -1,3 +1,4 @@
+import type { BackupOptions } from '@shared/backup.js'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ConfigurationSummary, WebDavConfiguration, WebDavConfigurationInput } from '@shared/types.js'
@@ -145,16 +146,16 @@ export class WebDavSyncService {
     })
   }
 
-  async upload(password: string): Promise<string> {
+  async upload(password: string, options?: BackupOptions): Promise<string> {
     return await this.run(async () => {
-      const encrypted = await this.backup.create(password)
+      const encrypted = await this.backup.create(password, options)
       await this.ensureDirectories()
       const remote = await this.metadata()
       this.requireStatus(remote.status, [200, 204, 404])
       const creating = remote.status === 404
       const strongEtag = remote.etag && !remote.etag.startsWith('W/') ? remote.etag : undefined
       if (!creating && strongEtag && this.state.etag && this.state.etag !== strongEtag) throw new Error('远端备份已被其他设备更新，请先下载并确认；未覆盖远端')
-      if (!await this.confirm(creating ? '上传加密配置？' : '更新远端加密配置？', '仅上传 AES-256-GCM 加密的连接、公共凭据、密码和私钥。\n\n' + (creating ? '将在指定 URL 创建备份文件。' : '这会替换远端备份文件，不会直接修改其他设备。' + (!strongEtag ? '\\n此服务器不提供版本标识，无法检测同时写入；请确认其他设备没有正在上传。' : '')))) return '已取消上传'
+      if (!await this.confirm(creating ? '上传加密配置？' : '更新远端加密配置？', '上传 AES-256-GCM 加密的基础连接资料及本次勾选的可选内容。\n\n' + (creating ? '将在指定 URL 创建备份文件。' : '这会替换远端备份文件，不会直接修改其他设备。' + (!strongEtag ? '\\n此服务器不提供版本标识，无法检测同时写入；请确认其他设备没有正在上传。' : '')))) return '已取消上传'
       const response = await this.request('PUT', { body: encrypted, headers: { 'Content-Type': 'application/json', ...(creating ? { 'If-None-Match': '*' } : strongEtag ? { 'If-Match': strongEtag } : {}) } })
       this.requireStatus(response.status, [200, 201, 204])
       const warning = this.remember(response.etag)
@@ -162,12 +163,12 @@ export class WebDavSyncService {
     })
   }
 
-  async download(password: string): Promise<ConfigurationSummary | null> {
+  async download(password: string, options?: BackupOptions): Promise<ConfigurationSummary | null> {
     return await this.run(async () => {
       const response = await this.request('GET')
       if (response.status === 404) throw new Error('远端还没有备份，请先从另一台设备上传')
       this.requireStatus(response.status, [200])
-      const summary = await this.backup.restore(response.body, password)
+      const summary = await this.backup.restore(response.body, password, options)
       if (summary) {
         const warning = this.remember(response.etag)
         if (warning) summary.warning = warning

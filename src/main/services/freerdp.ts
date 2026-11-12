@@ -1,7 +1,7 @@
 import { checkNativeRuntime, nativeEnvironment, nativeStartupError } from './freerdp-runtime.js'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, appendFileSync, mkdirSync, statSync, renameSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { WebSocketServer, WebSocket } from 'ws'
@@ -39,7 +39,11 @@ interface NativeSession {
 
 function nativeDiagnostic(name: string): string {
   const code = /^[A-Z0-9_]{1,256}$/.test(name) ? name : 'UNKNOWN_NATIVE_ERROR'
-  const reason = /AUTHENTICATION_FAILED|LOGON_FAILURE|WRONG_PASSWORD|ACCESS_DENIED/.test(code) ? '账号认证失败，请核对用户名、域、密码和远程登录权限' :
+  const reason = /DISCONNECTED_BY_OTHER_CONNECTION/.test(code) ? '会话已被其他连接接管，已停止自动重连；手动连接可能中断对方会话' :
+    /OMNIDESK_SESSION_RESUME_REJECTED/.test(code) ? '原会话恢复被拒绝，已停止重连；没有使用密码重新登录' :
+    /OMNIDESK_SESSION_RESUME_TIMEOUT/.test(code) ? '恢复原会话已超时，已停止自动重连' :
+    /RPC_INITIATED_DISCONNECT|RPC_INITIATED_LOGOFF|LOGOFF_BY_USER/.test(code) ? '服务器或用户已结束会话，已停止自动重连' :
+    /AUTHENTICATION_FAILED|LOGON_FAILURE|WRONG_PASSWORD|ACCESS_DENIED/.test(code) ? '账号认证失败，请核对用户名、域、密码和远程登录权限' :
     /PASSWORD_EXPIRED|PASSWORD_MUST_CHANGE/.test(code) ? '密码已过期或需要更改，请先通过系统客户端处理' :
     /ACCOUNT_DISABLED|ACCOUNT_LOCKED|ACCOUNT_EXPIRED/.test(code) ? '账号已停用、锁定或过期，请联系服务器管理员' :
     /SECURITY_NEGO/.test(code) ? '服务器拒绝安全协商；若仅支持旧版 RDP 安全层，请在此连接中明确选择旧版模式，或使用系统客户端' :
@@ -61,13 +65,13 @@ export class FreeRdpService {
   private fileReceiveRevision = 0
   private receivingSession?: string
 
-  constructor(private readonly directory: string, private readonly certificates: RdpCertificateVerifier, private readonly fileClipboard: FileClipboard = new NativeFileClipboard(directory), private readonly fileCacheRoot?: string) {}
+  constructor(private readonly directory: string, private readonly certificates: RdpCertificateVerifier, private readonly fileClipboard: FileClipboard = new NativeFileClipboard(directory), private readonly fileCacheRoot?: string, private readonly diagnosticRoot?: string) {}
 
   status(): { available: boolean; version?: string; message: string } {
     if (process.platform !== 'win32' || process.arch !== 'x64') return { available: false, message: 'FreeRDP 当前仅支持 Windows x64' }
     try {
       const manifest = JSON.parse(readFileSync(join(this.directory, 'manifest.json'), 'utf8'))
-      if (manifest.protocol !== 5 || manifest.platform !== 'win32-x64' || !manifest.files?.['omnidesk-freerdp.exe'] || !Object.keys(manifest.files).every(name => /^[\w.-]+$/.test(name))) throw new Error('清单协议或文件列表不匹配')
+      if (manifest.protocol !== 6 || manifest.platform !== 'win32-x64' || !manifest.files?.['omnidesk-freerdp.exe'] || !Object.keys(manifest.files).every(name => /^[\w.-]+$/.test(name))) throw new Error('清单协议或文件列表不匹配')
       const missing = Object.keys(manifest.files).filter(name => !existsSync(join(this.directory, name)))
       if (missing.length) throw new Error('缺少 ' + missing.join('、'))
       return { available: true, version: manifest.version, message: `FreeRDP ${manifest.version} · 本机独立进程` }
@@ -125,11 +129,12 @@ export class FreeRdpService {
     return !!session?.child && session.options.enableClipboard !== false && !session.controller.signal.aborted
   }
 
-  async clipboardFiles(sessionId: string, action: 'paste' | 'offer' | 'receive' | 'cancel' | 'cancel-paste', allowed: () => boolean): Promise<boolean | 'remote'> {
+  async clipboardFiles(sessionId: string, action: 'paste' | 'offer' | 'receive' | 'cancel' | 'cancel-paste' | 'sync-text', allowed: () => boolean): Promise<boolean | 'remote'> {
     const session = this.sessions.get(sessionId)
     if (!this.allowsClipboard(sessionId) || !session?.files) throw new Error('请聚焦已开启剪贴板的 FreeRDP 会话后重试')
     if (action === 'cancel-paste') { session.files.cancelPreparation(); return true }
     if (!allowed()) throw new Error('请聚焦已开启剪贴板的 FreeRDP 会话后重试')
+    if (action === 'sync-text') return session.files.prepareTextSync(allowed)
     if (action === 'paste') return session.files.publishLocal(allowed)
     if (action === 'offer') { await session.files.offerRemote(); return true }
     if (action === 'receive') {
@@ -192,6 +197,19 @@ export class FreeRdpService {
     return this.starting
   }
 
+  private diagnostic(session: NativeSession, event: Record<string, number | string>): void {
+    if (!this.diagnosticRoot) return
+    try {
+      mkdirSync(this.diagnosticRoot, { recursive: true })
+      const file = join(this.diagnosticRoot, 'freerdp-diagnostics.jsonl')
+      if (existsSync(file) && statSync(file).size >= 1024 * 1024) {
+        if (existsSync(file + '.1')) unlinkSync(file + '.1')
+        renameSync(file, file + '.1')
+      }
+      appendFileSync(file, JSON.stringify({ at: new Date().toISOString(), sessionId: session.sessionId, established: !!session.established, route: session.proxy?.type ?? 'direct', ...event }) + '\n', { mode: 0o600 })
+    } catch { /* Diagnostic I/O must not interrupt a desktop. */ }
+  }
+
   private bind(session: NativeSession, ws: WebSocket): void {
     session.ws = ws
     clearTimeout(session.expiry)
@@ -244,6 +262,13 @@ export class FreeRdpService {
           child.stderr.resume()
           const decoder = new NativePacketDecoder(packet => {
             if (ended) return
+            if (packet[0] === 12) {
+              if (packet.length !== 21) { fail('FreeRDP 诊断数据格式不正确'); return }
+              const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength)
+              this.diagnostic(session, { phase: view.getUint32(1, true), error: view.getUint32(5, true), errorInfo: view.getUint32(9, true), attempt: view.getUint32(13, true), win32Error: view.getUint32(17, true) })
+              return
+            }
+            if (packet[0] === 11 && packet.length === 9 && packet[1] === 1) session.files?.reset()
             if (packet[0] === 9) { session.files?.handle(packet); return }
             if (packet[0] === 6) {
               if (packet.length > 256 * 1024 + 1) { fail('FreeRDP 证书数据超出范围'); return }

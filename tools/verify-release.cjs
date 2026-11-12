@@ -16,7 +16,7 @@ async function main() {
   const entries = asar.listPackage(archive).map(name => name.replaceAll('\\', '/').replace(/^\//, ''))
   assert(entries.every(name => ['out', 'node_modules', 'package.json'].includes(name.split('/')[0])))
   assert(!entries.some(name => /^node_modules\/(?:playwright|playwright-core|typescript|electron-builder|electron-vite|tabby-rdp|ironrdp-wasm)(?:\/|$)/.test(name)))
-  assert(!entries.some(name => /^(?:out\/native|src|native|official-server|tmp)(?:\/|$)|\.(?:rdo|odbackup|pem|pfx)$|(?:^|\/)(?:vault\.enc|vault-key\.json|connections\.json|shared-credentials\.json|webdav-sync\.json|ai-settings\.json|ai-conversations\.enc|official-account\.json|known-hosts\.json|rdp-legacy-consent\.json)$/.test(name)))
+  assert(!entries.some(name => /^(?:out\/native|src|native|official-server|tmp)(?:\/|$)|\.(?:rdo|odbackup|odmonitor|pem|pfx)$|(?:^|\/)(?:vault\.enc|vault-key\.json|connections\.json|shared-credentials\.json|webdav-sync\.json|monitoring\.json|backup-preferences\.json|ai-settings\.json|ai-conversations\.enc|official-account\.json|known-hosts\.json|rdp-legacy-consent\.json)$/.test(name)))
   assert.equal(JSON.parse(asar.extractFile(archive, 'package.json').toString()).version, version)
   const publishing = require('../package.json').build.publish
   assert.equal(`${publishing.owner}/${publishing.repo}`, 'jixn-hu/omnidesk-releases')
@@ -40,10 +40,11 @@ async function main() {
   }
   for (const directory of ['out/main', 'out/preload', 'out/renderer']) compare(path.join(root, directory))
   for (const license of ['IronRDP-LICENSE', 'Tabby-RDP-LICENSE', 'Guacamole-LICENSE']) assert(fs.existsSync(path.join(release, 'win-unpacked/resources/licenses', license)))
+  require('./build-monitor-agent.cjs').verify(path.join(release, 'win-unpacked/resources/monitor-agent'))
   const native = path.join(release, 'win-unpacked/resources/freerdp')
   const privatePaths = [root, process.env.USERPROFILE].filter(Boolean).flatMap(value => [...new Set([value.replaceAll('\\', '/'), value.replaceAll('/', '\\')])]).flatMap(value => ['utf8', 'utf16le'].map(encoding => Buffer.from(value, encoding)))
   const manifest = JSON.parse(fs.readFileSync(path.join(native, 'manifest.json'), 'utf8'))
-  assert.equal(manifest.protocol, 5)
+  assert.equal(manifest.protocol, 6)
   assert.equal(manifest.platform, 'win32-x64')
   for (const [name, hash] of Object.entries(manifest.files)) {
     assert.match(name, /^[\w.-]+$/)

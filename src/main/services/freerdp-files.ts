@@ -209,6 +209,36 @@ export class FreeRdpFiles {
   }
   private async closeEntries(entries: Entry[]): Promise<void> { await Promise.all(entries.map(entry => entry.handle?.close().catch(() => {}))) }
 
+  async prepareTextSync(allowed: () => boolean): Promise<boolean | 'remote'> {
+    if (this.disposed || !allowed()) throw new Error('请聚焦远程桌面后粘贴')
+    const revision = this.outgoingRevision
+    const snapshot = await this.clipboard.read()
+    if (this.disposed || !allowed() || revision !== this.outgoingRevision) throw new Error('剪贴板同步已取消')
+    if (this.remoteClipboard && snapshot.sequence === this.remoteSequence) return 'remote'
+    if (snapshot.paths.length) return true
+    const hadFiles = this.remoteFiles || this.outgoing.length > 0
+    this.remoteClipboard = false
+    this.remoteFiles = false
+    this.cancelPreparation()
+    this.cancelIncoming()
+    const outgoing = this.outgoing
+    this.outgoing = []
+    this.activeOutgoingId = 0
+    await this.closeEntries(outgoing)
+    if (hadFiles && !this.disposed) this.send(nativeCommand(8, nativeNumbers(5)))
+    if (this.disposed || !allowed()) throw new Error('剪贴板同步已取消')
+    return false
+  }
+
+  reset(): void {
+    this.cancel()
+    this.generation = 0
+    this.remoteClipboard = false
+    this.remoteFiles = false
+    this.remoteSequence = 0
+    this.offeringGeneration = 0
+  }
+
   async publishLocal(allowed: () => boolean): Promise<boolean | 'remote'> {
     if (this.disposed || !allowed()) throw new Error('请聚焦远程桌面后粘贴')
     if (this.preparing) throw new Error('正在准备文件，请稍候再粘贴')

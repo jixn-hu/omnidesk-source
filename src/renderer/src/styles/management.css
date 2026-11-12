@@ -214,3 +214,17 @@
 .sidebar-layout-preview[data-layout=grouped] i:nth-child(4) { margin-top:4px; }
 .sidebar-layout-preview[data-layout=flat] i { width:80%; }
 @media(max-width:800px) { .sidebar-layout-options { grid-template-columns:1fr; } .sidebar-layout-preview { display:none; } .sidebar-layout-option { padding-right:34px; } }
+
+/* One content selector shared by local, WebDAV and account backups. */
+.backup-contents { border: 1px solid var(--border); border-radius: 10px; padding: 4px 14px; margin: 16px 0 10px; min-width: 0; }
+.backup-contents legend { padding: 0 6px; font-size: 12px; color: var(--text-secondary); }
+.backup-content { display: flex; gap: 10px; padding: 11px 0; margin: 0; align-items: flex-start; }
+.backup-content + .backup-content { border-top: 1px solid var(--border); }
+.backup-content input { margin-top: 3px; flex-shrink: 0; }
+.backup-content > span { flex: 1; min-width: 0; }
+.backup-content strong { display: block; font-weight: 500; font-size: 13px; }
+.backup-content small { display: block; color: var(--text-secondary); font-size: 11px; line-height: 1.7; margin-top: 3px; }
+.backup-content em { font-size: 10px; font-style: normal; color: var(--text-secondary); border: 1px solid var(--border); padding: 1px 6px; border-radius: 4px; }
+.backup-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.backup-server-data { margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--border); }
+.backup-server-data summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; }

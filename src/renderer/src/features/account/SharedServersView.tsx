@@ -25,7 +25,7 @@ export default function SharedServersView() {
     let active = true
     void window.omnidesk.account.status().then(result => {
       if (!active) return
-      if (result.ok) { setStatus(result.data); useApp.setState({ accountUser: result.data.user }) }
+      if (result.ok) { setStatus(result.data); useApp.getState().setAccountStatus(result.data) }
       else setError(result.message)
     }).catch(() => { if (active) setError('无法读取服务登录状态') })
     return () => { active = false }
@@ -60,7 +60,7 @@ export default function SharedServersView() {
     if (local.ok) useApp.getState().setConnections(local.data)
     setNotice(result.data.skipped ? '本机已有相同服务器，已跳过，保留本机配置和凭据。' : '已拉取到本机。可在个人服务器管理中独立连接和编辑。')
   })
-  const login = () => useApp.getState().openTab({ id: 'tab-account', kind: 'account', title: '账号与同步', status: 'idle' })
+  const login = () => useApp.getState().openTab({ id: 'tab-account', kind: 'account', title: '账号', status: 'idle' })
   return <div className="account-workspace shared-servers-workspace">
     <header className="account-heading"><div><div className="eyebrow">SHARED SERVERS</div><h1>共享服务器</h1><p>团队服务器与个人共享集中在这里。拉取到本机后，使用本机 SSH / RDP 直接连接。</p></div><div className="shared-heading-actions"><button className="btn btn-ghost" onClick={login}><Icon name="user" size={16} />{status?.user?.username || '登录服务账号'}</button>{status?.user?.role === 'admin' && <button className="btn" disabled={busy} onClick={() => void operate(async () => { const result = await window.omnidesk.account.openAdmin(); if (!result.ok) throw new Error(result.message) })}><Icon name="link" size={16} />Web 管理共享服务器</button>}</div></header>
     {error && <div className="alert alert-danger" role="alert">{error}</div>}{notice && <div className="alert alert-success" role="status">{notice}</div>}

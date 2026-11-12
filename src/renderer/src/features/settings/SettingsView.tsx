@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useApp } from '../../store/app'
-import type { VaultMode, VpnConnection, VpnConnectResult } from '@shared/types'
+import type { VaultMode } from '@shared/types'
 import ConfigurationSync from './ConfigurationSync'
 import SoftwareUpdates from './SoftwareUpdates'
 import AppearanceSettings from './AppearanceSettings'
 import AiSettings from '../ai/AiSettings'
 import SettingsSection from './SettingsSection'
+
+import '../monitor/monitoring.css'
 
 export default function SettingsView() {
   const [info, setInfo] = useState<{
@@ -25,39 +27,6 @@ export default function SettingsView() {
   const [pwOpen, setPwOpen] = useState(false)
   const [modeDialog, setModeDialog] = useState(false)
   const [vaultMode, setVaultMode] = useState<VaultMode | null>(null)
-
-  /* 系统 VPN */
-  const [vpnList, setVpnList] = useState<VpnConnection[]>([])
-  const [vpnLoading, setVpnLoading] = useState(true)
-  const [vpnBusy, setVpnBusy] = useState<string | null>(null)
-  const [vpnMessage, setVpnMessage] = useState<{ ok: boolean; text: string } | null>(null)
-  const isWindows = info?.platform === 'win32'
-
-  const loadVpn = async (): Promise<void> => {
-    setVpnLoading(true)
-    const res = await window.omnidesk.vpn.list()
-    setVpnLoading(false)
-    if (res.ok) setVpnList(res.data)
-    else setVpnMessage({ ok: false, text: res.message })
-  }
-
-  /** 执行一次拨号/断开，并把结果反馈到界面 */
-  const vpnAction = async (
-    fn: () => Promise<{ ok: boolean; data?: VpnConnectResult; message?: string }>
-  ): Promise<void> => {
-    setVpnMessage(null)
-    const res = await fn()
-    if (res.ok && res.data) {
-      setVpnMessage({ ok: res.data.ok, text: res.data.message })
-    } else {
-      setVpnMessage({ ok: false, text: res.message ?? '操作失败' })
-    }
-    await loadVpn()
-  }
-
-  useEffect(() => {
-    void loadVpn()
-  }, [])
 
   useEffect(() => {
     void window.omnidesk.app.info().then((r) => {
@@ -84,8 +53,8 @@ export default function SettingsView() {
         <SettingsSection id="ai" title="AI 模型配置" description="接口、模型、调用上限与默认权限">
           <AiSettings embedded />
         </SettingsSection>
-        <SettingsSection id="backup" title="配置备份与 WebDAV 同步" description="加密备份、导入恢复与 WebDAV 同步">
-          <ConfigurationSync embedded />
+        <SettingsSection id="backup" title="备份" description="本地文件与 WebDAV 备份、恢复">
+          <ConfigurationSync embedded destination="backup" />
         </SettingsSection>
         <SettingsSection id="updates" title="软件更新" description="版本检查、更新来源与自动检查偏好">
           <SoftwareUpdates embedded />
@@ -148,90 +117,6 @@ export default function SettingsView() {
                 连接自签名证书的服务器时，请在该连接的配置里单独开启「忽略证书错误」，
                 而不要期望全局放宽 —— 全局放宽会让所有连接（包括 AI 服务调用）都失去保护。
               </div>
-            </div>
-          </div>
-        </SettingsSection>
-
-        {/* 系统 VPN */}
-        <SettingsSection id="vpn" title="系统 VPN" description="查看 Windows VPN 状态，手动连接或断开">
-          <div className="card">
-            <div className="card-desc">
-              这里是 Windows「设置 → 网络和 Internet → VPN」里已配置的连接。
-              <strong>VPN 是系统级的</strong> —— 拨通后本程序的所有连接都会走它，
-              无需额外配置。如果只想让某一条连接走特定出口，请在连接的「网络代理」里设置。
-            </div>
-
-            {vpnLoading ? (
-              <div className="field-hint">正在读取系统 VPN 列表…</div>
-            ) : vpnList.length === 0 ? (
-              <div className="alert alert-info">
-                <span>ℹ</span>
-                <div>
-                  系统里没有已配置的 VPN 连接。
-                  {isWindows
-                    ? '如需添加，请到 Windows 的「设置 → 网络和 Internet → VPN」中新建。'
-                    : '系统 VPN 集成目前仅支持 Windows。'}
-                </div>
-              </div>
-            ) : (
-              <>
-                {vpnList.map((v) => (
-                  <div
-                    key={v.name}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 12,
-                      padding: '9px 0',
-                      borderTop: '1px solid var(--border)'
-                    }}
-                  >
-                    <span className={`dot ${v.connected ? 'dot-connected' : 'dot-idle'}`} />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 12.5 }}>{v.name}</div>
-                      <div className="field-hint">{v.connected ? '已连接' : '未连接'}</div>
-                    </div>
-                    {v.connected ? (
-                      <button
-                        className="btn btn-sm"
-                        disabled={vpnBusy === v.name}
-                        onClick={() => vpnAction(() => window.omnidesk.vpn.disconnect(v.name))}
-                      >
-                        {vpnBusy === v.name ? '处理中…' : '断开'}
-                      </button>
-                    ) : (
-                      <button
-                        className="btn btn-sm btn-primary"
-                        disabled={vpnBusy === v.name}
-                        onClick={() => vpnAction(() => window.omnidesk.vpn.connect(v.name))}
-                      >
-                        {vpnBusy === v.name ? '拨号中…' : '连接'}
-                      </button>
-                    )}
-                  </div>
-                ))}
-
-                {vpnMessage && (
-                  <div
-                    className={`alert ${vpnMessage.ok ? 'alert-info' : 'alert-danger'}`}
-                    style={{ marginTop: 12 }}
-                  >
-                    <span>{vpnMessage.ok ? '✓' : '⚠'}</span>
-                    <div>{vpnMessage.text}</div>
-                  </div>
-                )}
-              </>
-            )}
-
-            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-              <button className="btn btn-sm" onClick={() => void loadVpn()}>
-                刷新状态
-              </button>
-            </div>
-
-            <div className="field-hint" style={{ marginTop: 12, lineHeight: 1.7 }}>
-              拨号默认使用 Windows 已保存的账号密码（推荐）。
-              这是有意为之 —— 命令行传密码会出现在系统进程列表里，不安全。
             </div>
           </div>
         </SettingsSection>

@@ -25,7 +25,7 @@ for (const filename of ['bin/openssl.exe', 'include/openssl/ssl.h', 'lib/libssl.
 mkdirSync(join(root, 'tmp'), { recursive: true })
 if (!existsSync(source)) run('git', ['clone', '--depth', '1', '--branch', version, 'https://github.com/FreeRDP/FreeRDP.git', source])
 if (run('git', ['-C', source, 'rev-parse', 'HEAD'], true).trim() !== revision) throw new Error(`FreeRDP 源码必须为 ${version} (${revision})；请先更新临时源码目录`)
-if (run('git', ['-C', source, 'status', '--porcelain', '--untracked-files=no'], true).trim()) throw new Error('拒绝使用已修改的 FreeRDP 依赖源码')
+require('./patch-freerdp-resume.cjs')(source)
 const disabled = ['SERVER', 'SAMPLE', 'WINPR_TOOLS', 'FFMPEG', 'SWSCALE', 'CAIRO', 'JPEG', 'OPENH264', 'AAD', 'URIPARSER', 'LIBUSB', 'SMARTCARD_EMULATE', 'MANPAGES', 'X11', 'WAYLAND', 'PULSE', 'ALSA', 'PCSC', 'ABSOLUTE_PLUGIN_LOAD_PATHS', 'DEBUG_ALL']
 const channels = ['URBDRC', 'SMARTCARD', 'PRINTER', 'DRIVE', 'RDPDR', 'AUDIN', 'RDPSND', 'LOCATION', 'ENCOMSP', 'RDPEI', 'RAIL', 'VIDEO', 'GEOMETRY', 'AINPUT', 'ECHO', 'REMDESK']
 run(cmake, ['-S', source, '-B', build, '-G', 'MinGW Makefiles', '-DCMAKE_BUILD_TYPE=Release', '-DCMAKE_INSTALL_PREFIX=C:/OmniDesk', `-DCMAKE_STAGING_PREFIX=${sdk.replaceAll('\\', '/')}`, `-DCMAKE_PREFIX_PATH=${msys.replaceAll('\\', '/')}`, `-DOPENSSL_ROOT_DIR=${openssl.replaceAll('\\', '/')}`, `-DOPENSSL_INCLUDE_DIR=${join(openssl, 'include').replaceAll('\\', '/')}`, `-DOPENSSL_CRYPTO_LIBRARY=${join(openssl, 'lib/libcrypto.dll.a').replaceAll('\\', '/')}`, `-DOPENSSL_SSL_LIBRARY=${join(openssl, 'lib/libssl.dll.a').replaceAll('\\', '/')}`, '-DCMAKE_C_FLAGS=-D__STDC_NO_THREADS__ -Wno-error=incompatible-pointer-types', '-DUSE_UNWIND=OFF', '-DWITH_CLIENT=OFF', '-DWITH_CLIENT_COMMON=ON', '-DWITH_MEDIA_FOUNDATION=ON', '-DWITH_JSON_DISABLED=ON', '-DWITH_CHANNELS=ON', '-DWITH_CHANNELS_STATIC=ON', '-DWITH_NATIVE_SSPI=ON', '-DBUILD_TESTING=OFF', ...disabled.map(name => `-DWITH_${name}=OFF`), ...channels.map(name => `-DCHANNEL_${name}=OFF`)])
@@ -77,7 +77,7 @@ for (const name of Object.keys(files)) {
   if (privatePaths.some(needle => binary.includes(needle))) throw new Error(`原生运行库包含开发机路径：${name}，请检查 CMake 安装前缀`)
 }
 const dependencies = { openssl: run(join(openssl, 'bin/openssl.exe'), ['version'], true).trim(), gcc: run(join(msys, 'bin/gcc.exe'), ['-dumpfullversion'], true).trim() }
-writeFileSync(join(output, 'manifest.json'), JSON.stringify({ protocol: 5, version, revision, platform: 'win32-x64', dependencies, files }, null, 2))
+writeFileSync(join(output, 'manifest.json'), JSON.stringify({ protocol: 6, version, revision, platform: 'win32-x64', dependencies, files }, null, 2))
 const check = execFileSync(executable, ['--version'], { encoding: 'utf8', windowsHide: true, env: { ...process.env, PATH: join(process.env.SystemRoot || 'C:/Windows', 'System32') } }).trim()
-if (!check.includes(`FreeRDP ${version} protocol=5`)) throw new Error('辅助进程版本检查失败')
+if (!check.includes(`FreeRDP ${version} protocol=6`)) throw new Error('辅助进程版本检查失败')
 console.log(`FreeRDP 已就绪：${check}，${bundled.size} 个运行库`)

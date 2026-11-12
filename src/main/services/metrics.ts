@@ -68,6 +68,7 @@ export class MetricsService {
   private netSnapshots = new Map<string, NetSnapshot>()
 
   private platforms = new Map<string, 'linux' | 'windows'>()
+  private recent = new Map<string, { value: ServerMetrics; processes: boolean }>()
   private pending = new Map<string, { withProcesses: boolean; operation: Promise<ServerMetrics> }>()
 
   constructor(private ssh: SshService) {
@@ -130,6 +131,8 @@ export class MetricsService {
    * @param withProcesses 是否包含进程 TOP
    */
   async collect(sessionId: string, withProcesses = false): Promise<ServerMetrics> {
+    const recent = this.recent.get(sessionId)
+    if (recent && Date.now() - recent.value.timestamp < 2500 && (!withProcesses || recent.processes)) return recent.value
     const pending = this.pending.get(sessionId)
     if (pending) {
       const sample = await pending.operation
@@ -137,7 +140,7 @@ export class MetricsService {
     }
     const operation = this.sample(sessionId, withProcesses)
     this.pending.set(sessionId, { withProcesses, operation })
-    try { return await operation } finally { this.pending.delete(sessionId) }
+    try { const value = await operation; this.recent.set(sessionId, { value, processes: withProcesses }); return value } finally { this.pending.delete(sessionId) }
   }
 
   private async sample(sessionId: string, withProcesses: boolean): Promise<ServerMetrics> {
@@ -239,6 +242,7 @@ export class MetricsService {
 
   /** 清理某连接的快照 */
   forget(connectionId: string): void {
+    this.recent.delete(connectionId)
     this.netSnapshots.delete(connectionId)
     this.platforms.delete(connectionId)
   }

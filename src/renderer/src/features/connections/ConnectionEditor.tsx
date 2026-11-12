@@ -1,3 +1,4 @@
+import ActionButton from '../../components/ActionButton'
 import { useEffect, useRef, useState } from 'react'
 import TagInput, { type TagInputHandle } from '../../components/TagInput'
 import { useApp } from '../../store/app'
@@ -749,9 +750,9 @@ export default function ConnectionEditor({ connectionId, initialKind = 'ssh', on
           <button className="btn" disabled={saving} onClick={onClose}>
             取消
           </button>
-          <button className="btn btn-primary" onClick={save} disabled={saving}>
-            {saving ? '保存中…' : '保存'}
-          </button>
+          <ActionButton phase={saving ? 'busy' : 'idle'} icon="check" className="btn btn-primary" onClick={save} disabled={saving}>
+            保存
+          </ActionButton>
         </div>
       </div>
     </div>

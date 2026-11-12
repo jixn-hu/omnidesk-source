@@ -2,6 +2,8 @@ import { useCallback, useState } from 'react'
 import TabContextMenu, { type TabMenuAction } from './TabContextMenu'
 import { useApp } from '../store/app'
 import Icon from './Icon'
+import { LayoutGroup } from 'motion/react'
+import NavSelection from './NavSelection'
 import { formatConnectionAddress } from '@shared/connection-identity'
 
 export default function TabBar() {
@@ -21,7 +23,10 @@ export default function TabBar() {
     return status !== 'connected' && status !== 'connecting'
   })
   const closeWindows = (ids: string[]) => ids.forEach(closeTab)
+  const menuTab = tabs[menuIndex]
+  const monitorConnection = menuTab && ['ssh', 'rdp'].includes(menuTab.kind) ? connections.find(item => item.id === menuTab.connectionId) : undefined
   const menuActions: TabMenuAction[] = [
+    ...(monitorConnection ? [{ label: '安装监控…', run: () => useApp.setState({ monitorInstallConnectionId: monitorConnection.id }) }] : []),
     ...(menuIndex < 0 ? [] : [
       { label: '关闭当前窗口', run: () => closeTab(menu!.tabId!) },
       { label: '关闭其他窗口', disabled: tabs.length <= 1, run: () => closeWindows(tabs.filter(tab => tab.id !== menu!.tabId).map(tab => tab.id)) },
@@ -32,7 +37,7 @@ export default function TabBar() {
   ]
 
   return (
-    <div className="tabbar" onContextMenu={event => {
+    <LayoutGroup id="workspace-tabs"><div className="tabbar" onContextMenu={event => {
       event.preventDefault()
       setMenu({ x: event.clientX, y: event.clientY })
     }}>
@@ -54,7 +59,7 @@ export default function TabBar() {
         return (
           <div
             key={tab.id}
-            className="tab"
+            className="tab motion-nav-item"
             data-active={tab.id === activeTabId}
             onClick={() => setActiveTab(tab.id)}
             onContextMenu={event => {
@@ -78,6 +83,7 @@ export default function TabBar() {
               }
             }}
           >
+            <NavSelection active={tab.id === activeTabId} group="active-tab" />
             <Icon name={tab.kind === 'ssh' ? 'terminal' : tab.kind === 'rdp' ? 'monitor' : tab.kind === 'ai' ? 'assistant' : tab.kind === 'credentials' ? 'key' : tab.kind === 'settings' ? 'settings' : tab.kind === 'files' ? 'folder' : 'layers'} size={14} />
             {(tab.kind === 'ssh' || tab.kind === 'rdp' || tab.kind === 'shared-session') && <span className={`dot ${dotClass}`} />}
             <span className="tab-title">{label}</span>
@@ -103,6 +109,6 @@ export default function TabBar() {
         )
       })}
       {menu && (!menu.tabId || menuIndex >= 0) && <TabContextMenu x={menu.x} y={menu.y} actions={menuActions} onClose={closeMenu} />}
-    </div>
+    </div></LayoutGroup>
   )
 }

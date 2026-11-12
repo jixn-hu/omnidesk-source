@@ -13,12 +13,14 @@ export default function AiSettings({ onSaved, embedded = false }: { onSaved?: (c
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null)
   useEffect(() => {
     let active = true
-    void window.omnidesk.ai.configuration().then(result => {
+    const refresh = () => { void window.omnidesk.ai.configuration().then(result => {
       if (!active) return
-      if (result.ok) { setConfiguration(result.data); setCallLimit(String(result.data.maxModelCalls)); setLoaded(true) }
+      if (result.ok) { setConfiguration(result.data); setCallLimit(String(result.data.maxModelCalls)); setLoaded(true); setKey(''); setClearKey(false) }
       else setMessage({ text: result.message, error: true })
-    })
-    return () => { active = false }
+    }) }
+    const restored = (event: Event) => { const sections = (event as CustomEvent<string[]>).detail; if (sections?.some(section => ['aiSettings', 'serviceCredentials'].includes(section))) refresh() }
+    refresh(); window.addEventListener('omnidesk:backup-restored', restored)
+    return () => { active = false; window.removeEventListener('omnidesk:backup-restored', restored) }
   }, [])
   const save = async (test: boolean) => {
     setBusy(true); setMessage(null)

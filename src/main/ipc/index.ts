@@ -1,3 +1,6 @@
+import { windowsMonitorBundle, windowsMonitorCommand } from '../services/monitor-windows-installer.js'
+import { encryptMonitorData, decryptMonitorData } from '../services/monitor-data-backup.js'
+import type { BackupOptions } from '@shared/backup.js'
 /**
  * IPC 路由
  *
@@ -8,6 +11,7 @@
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import { app, shell, dialog, screen, clipboard, BrowserWindow } from 'electron'
 import { IPC } from '@shared/ipc.js'
+import type { MonitorEntry, MonitorNode, MonitorPoint, MonitorAlert } from '@shared/monitoring'
 import type { Connection, ExecOptions, IpcResult, SshConnection } from '@shared/types.js'
 import { services } from '../services/index.js'
 import { broadcast, getPrimaryWindow } from '../windows.js'
@@ -16,7 +20,7 @@ import { resolveConnectionCredential } from '../services/credential-resolver.js'
 import { checkConnection } from '../services/connection-check.js'
 import { rdpAddress } from '../services/rdp-protocol.js'
 import { launchSystemRdp } from '../services/rdp-system-client.js'
-import { readFileSync, statSync } from 'node:fs'
+import { readFileSync, statSync, writeFileSync } from 'node:fs'
 import { writeConfigurationFile } from '../services/config-backup.js'
 import type { WebDavConfigurationInput } from '@shared/types.js'
 import { connectionKey, parseConnectionAddress } from '@shared/connection-identity.js'
@@ -126,6 +130,8 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
   ipcMain.handle(IPC.aiCancel, safe(conversationId => services.ai.cancel(conversationId)))
   ipcMain.handle(IPC.aiClear, safe(conversationId => services.ai.clear(conversationId)))
   ipcMain.handle(IPC.accountStatus, safe(() => services.account.status()))
+  ipcMain.handle(IPC.accountSwitch, safe((id: string) => services.account.switchAccount(id)))
+  ipcMain.handle(IPC.accountRemove, safe((id: string) => services.account.removeAccount(id)))
   ipcMain.handle(IPC.accountOpenAdmin, safe(async () => {
     const status = services.account.status()
     if (!status.serverUrl || status.user?.role !== 'admin') throw new Error('请先登录服务管理员账号')
@@ -149,8 +155,8 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
   ipcMain.handle(IPC.accountGitlabPoll, safe((id: string) => services.account.pollGitlab(id)))
   ipcMain.handle(IPC.accountGitlabCancel, safe((id: string) => services.account.cancelGitlab(id)))
   ipcMain.handle(IPC.accountLogout, safe(() => services.account.logout()))
-  ipcMain.handle(IPC.accountUpload, safe(() => services.account.upload()))
-  ipcMain.handle(IPC.accountDownload, safe(() => services.account.download()))
+  ipcMain.handle(IPC.accountUpload, safe((options?: BackupOptions) => services.account.upload(options)))
+  ipcMain.handle(IPC.accountDownload, safe((options?: BackupOptions) => services.account.download(options)))
   ipcMain.handle(IPC.accountShares, safe((search: string, page: number) => services.account.shares(search, page)))
   ipcMain.handle(IPC.accountUsers, safe((search: string, page: number) => services.account.users(search, page)))
   ipcMain.handle(IPC.accountPublish, safe(async (id: string) => {
@@ -181,24 +187,54 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
   ipcMain.handle(IPC.credentialProbeApply, safe((id: string, connectionId: string) => services.credentialProbe.apply(id, connectionId)))
   ipcMain.handle(IPC.configurationPasswordStatus, safe(() => services.backup.hasSavedPassword()))
   ipcMain.handle(IPC.configurationSavePassword, safe((password: string) => services.backup.savePassword(password)))
-  ipcMain.handle(IPC.configurationExport, safe(async (password: string) => {
-    const contents = await services.backup.create(password)
+  ipcMain.handle(IPC.configurationMonitorExport, safe(async (password: string) => {
+    if (services.vault.status() !== 'unlocked') throw new Error('请先解锁保险箱')
+    const secret = password || services.vault.getCredential('configuration-backup-password')?.secret || ''
+    if (!secret) throw new Error('请先输入数据库备份密码')
+    const result = await dialog.showSaveDialog({ title: '导出监控服务端数据（加密）', defaultPath: `OmniDesk-monitor-${new Date().toISOString().slice(0, 10)}.odmonitor`, filters: [{ name: '监控数据库加密备份', extensions: ['odmonitor'] }] })
+    if (result.canceled || !result.filePath) return { cancelled: true }
+    let snapshot: unknown
+    try { snapshot = await services.monitoring.request('/v1/backup') }
+    catch (error) {
+      if (error instanceof Error && /HTTP 404|HTTP 405/.test(error.message)) throw new Error('当前监控服务端尚不支持数据库快照，请先升级服务端；本机未生成备份')
+      throw error
+    }
+    writeConfigurationFile(result.filePath, await encryptMonitorData(secret, snapshot))
+    return { cancelled: false, path: result.filePath }
+  }))
+  ipcMain.handle(IPC.configurationMonitorDecrypt, safe(async (password: string) => {
+    if (services.vault.status() !== 'unlocked') throw new Error('请先解锁保险箱')
+    const source = await dialog.showOpenDialog({ title: '选择监控数据库加密备份', properties: ['openFile'], filters: [{ name: '监控数据库加密备份', extensions: ['odmonitor'] }] })
+    if (source.canceled || !source.filePaths[0]) return { cancelled: true }
+    if (statSync(source.filePaths[0]).size > 96 * 1024 * 1024) throw new Error('数据库备份超过大小限制')
+    const secret = password || services.vault.getCredential('configuration-backup-password')?.secret || ''
+    const data = await decryptMonitorData(secret, readFileSync(source.filePaths[0], 'utf8'))
+    try {
+      const result = await dialog.showSaveDialog({ title: '保存解密后的数据库（含节点敏感资料，请妥善保管）', defaultPath: 'omnidesk-monitor-restored.db', filters: [{ name: 'SQLite 数据库', extensions: ['db'] }] })
+      if (result.canceled || !result.filePath) return { cancelled: true }
+      if (source.filePaths[0].toLowerCase() === result.filePath.toLowerCase()) throw new Error('请另选数据库保存位置，保留原始加密备份')
+      writeConfigurationFile(result.filePath, data)
+      return { cancelled: false, path: result.filePath }
+    } finally { data.fill(0) }
+  }))
+  ipcMain.handle(IPC.configurationExport, safe(async (password: string, options?: BackupOptions) => {
+    const contents = await services.backup.create(password, options)
     const result = await dialog.showSaveDialog({ title: '导出加密配置', defaultPath: `OmniDesk-${new Date().toISOString().slice(0, 10)}.odbackup`, filters: [{ name: 'OmniDesk 加密备份', extensions: ['odbackup'] }] })
     if (result.canceled || !result.filePath) return { cancelled: true }
     writeConfigurationFile(result.filePath, contents)
     return { cancelled: false, path: result.filePath }
   }))
-  ipcMain.handle(IPC.configurationImport, safe(async (password: string) => {
+  ipcMain.handle(IPC.configurationImport, safe(async (password: string, options?: BackupOptions) => {
     const result = await dialog.showOpenDialog({ title: '导入加密配置', properties: ['openFile'], filters: [{ name: 'OmniDesk 加密备份', extensions: ['odbackup', 'json'] }] })
     if (result.canceled || !result.filePaths[0]) return null
     if (statSync(result.filePaths[0]).size > 16 * 1024 * 1024) throw new Error('配置文件超过 16MB，未导入')
-    return await services.backup.restore(readFileSync(result.filePaths[0], 'utf8'), password)
+    return await services.backup.restore(readFileSync(result.filePaths[0], 'utf8'), password, options)
   }))
   ipcMain.handle(IPC.webdavConfiguration, safe(() => services.webdav.configuration()))
   ipcMain.handle(IPC.webdavSave, safe((configuration: WebDavConfigurationInput) => services.webdav.save(configuration)))
   ipcMain.handle(IPC.webdavTest, safe(async () => await services.webdav.test()))
-  ipcMain.handle(IPC.webdavUpload, safe(async (password: string) => await services.webdav.upload(password)))
-  ipcMain.handle(IPC.webdavDownload, safe(async (password: string) => await services.webdav.download(password)))
+  ipcMain.handle(IPC.webdavUpload, safe(async (password: string, options?: BackupOptions) => await services.webdav.upload(password, options)))
+  ipcMain.handle(IPC.webdavDownload, safe(async (password: string, options?: BackupOptions) => await services.webdav.download(password, options)))
   /* ---------------------------- 应用 ---------------------------- */
 
   ipcMain.handle(IPC.updatesStatus, safe(() => services.updates.status()))
@@ -255,7 +291,7 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
   ipcMain.handle(
     IPC.fsReadText,
     safe(async (filePath: string, maxBytes = 256 * 1024) => {
-      const { readFileSync, statSync } = await import('node:fs')
+      const { readFileSync, statSync, writeFileSync } = await import('node:fs')
       const st = statSync(filePath)
       if (!st.isFile()) throw new Error('不是普通文件')
       if (st.size > maxBytes) {
@@ -435,6 +471,9 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
       return true
     })
   )
+
+  ipcMain.handle(IPC.dockerSnapshot, safe((sessionId: string) => services.docker.snapshot(sessionId)))
+  ipcMain.handle(IPC.dockerRemove, safe((sessionId: string, request: import('@shared/docker.js').DockerRemoveRequest) => services.docker.remove(sessionId, request)))
 
   ipcMain.handle(IPC.sshList, safe(() => services.ssh.list()))
 
@@ -629,20 +668,6 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
     safe((id: string) => services.sharedCredentials.countUsage(id, services.connections.list()))
   )
 
-  /* ---------------------------- 系统 VPN --------------------------- */
-
-  /** 列出系统里配置的 VPN 连接及其状态 */
-  ipcMain.handle(IPC.vpnList, safe(() => services.vpn.list()))
-
-  ipcMain.handle(
-    IPC.vpnConnect,
-    safe((name: string, credentials?: { username: string; password: string }) =>
-      services.vpn.connect(name, credentials)
-    )
-  )
-
-  ipcMain.handle(IPC.vpnDisconnect, safe((name: string) => services.vpn.disconnect(name)))
-
   /* ---------------------- XTerminal 配置导入 ---------------------- */
 
   /** 扫描 XTerminal 的本地配置库，返回待导入项（不写入任何东西） */
@@ -827,7 +852,7 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
     return text
   })(event))
 
-  ipcMain.handle(IPC.rdpClipboardFiles, (event, sessionId: string, action: 'paste' | 'offer' | 'receive' | 'cancel' | 'cancel-paste') => safe(async () => {
+  ipcMain.handle(IPC.rdpClipboardFiles, (event, sessionId: string, action: 'paste' | 'offer' | 'receive' | 'cancel' | 'cancel-paste' | 'sync-text') => safe(async () => {
     return services.freeRdp.clipboardFiles(sessionId, action, () => !event.sender.isDestroyed() && event.sender.isFocused())
   })(event))
 
@@ -864,8 +889,51 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
 
   ipcMain.handle(
     IPC.metricsCollect,
-    safe((sessionId: string, withProcesses?: boolean) => services.metrics.collect(sessionId, withProcesses))
+    safe(async (sessionId: string, withProcesses?: boolean) => {
+      const metrics = await services.metrics.collect(sessionId, withProcesses)
+      return metrics
+    })
   )
+
+  ipcMain.handle(IPC.monitorWindowsCommand, safe((input: import('@shared/monitoring').MonitorInstallInput) => windowsMonitorCommand(services.monitoring, services.connections, input)))
+  ipcMain.handle(IPC.monitorWindowsBundle,safe(async(input:import('@shared/monitoring').MonitorInstallInput)=>{
+    const chosen=await dialog.showSaveDialog({title:'保存 Windows 监控安装脚本',defaultPath:'OmniDesk-Monitor-Install.ps1',filters:[{name:'PowerShell 安装脚本',extensions:['ps1']}]})
+    if(chosen.canceled||!chosen.filePath)return {cancelled:true}
+    const bundle=await windowsMonitorBundle(services.monitoring,services.connections,app.isPackaged?join(process.resourcesPath,'monitor-agent'):join(app.getAppPath(),'out/monitor-agent'),input)
+    writeFileSync(chosen.filePath,'\ufeff'+bundle.contents,{encoding:'utf8',mode:0o600})
+    return {cancelled:false,path:chosen.filePath,installationId:bundle.installationId}
+  }))
+  ipcMain.handle(IPC.monitorLocal, safe(() => services.monitoring.local()))
+  ipcMain.handle(IPC.monitorConfigure, safe(input => services.monitoring.configure(input)))
+  ipcMain.handle(IPC.monitorSaveEntry, safe((input: MonitorEntry) => services.monitoring.saveEntry(input)))
+  ipcMain.handle(IPC.monitorRemoveEntry, safe((id: string) => services.monitoring.removeEntry(id)))
+  ipcMain.handle(IPC.monitorLocalHistory, safe((id: string) => services.monitoring.localHistory(id)))
+  ipcMain.handle(IPC.monitorProbe,safe((id:string)=>{if(!/^[a-f0-9]{24}$/.test(id))throw new Error('无效节点');return services.monitoring.request<{requestId:string}>('/v1/nodes/'+id+'/probe','POST')}))
+  ipcMain.handle(IPC.monitorUnclaimed,safe(()=>services.monitoring.request<MonitorNode[]>('/v1/unclaimed')))
+  ipcMain.handle(IPC.monitorClaim,safe((id:string)=>{if(!/^[a-f0-9]{24}$/.test(id))throw new Error('无效节点');return services.monitoring.request<{ok:boolean}>('/v1/nodes/'+id+'/claim','POST')}))
+  ipcMain.handle(IPC.monitorNodes, safe(() => services.monitoring.request<MonitorNode[]>('/v1/nodes')))
+  ipcMain.handle(IPC.monitorTest, safe(async () => {
+    await services.monitoring.request<MonitorNode[]>('/v1/nodes')
+    return services.monitoring.request<{ service: string; protocol: number }>('/healthz')
+  }))
+  ipcMain.handle(IPC.monitorSaveNode, safe((input: { id?: string; name: string; group: string; asset: MonitorEntry['asset'] }) => {
+    if (input.id && !/^[a-f0-9]{24}$/.test(input.id)) throw new Error('无效节点')
+    return services.monitoring.saveNode(input)
+  }))
+  ipcMain.handle(IPC.monitorRotateToken, safe((id: string) => {
+    if (!/^[a-f0-9]{24}$/.test(id)) throw new Error('无效节点')
+    return services.monitoring.rotateAgentToken(id)
+  }))
+  ipcMain.handle(IPC.monitorAgentInstallInfo, safe((id: string) => { const info = services.monitoring.agentInstallation(id); return { hasToken: !!info.token, connectionId: info.connectionId } }))
+  ipcMain.handle(IPC.monitorPrepareAgentNode, safe((id: string) => services.monitorAgentInstaller.prepareNode(id)))
+  ipcMain.handle(IPC.monitorRemoveNode, safe((id: string) => services.monitorAgentInstaller.removeNode(id)))
+  ipcMain.handle(IPC.monitorSessionInfo, safe((id: string) => services.monitorAgentInstaller.sessionInfo(id)))
+  ipcMain.handle(IPC.monitorInstallAgent, safe((input: import('@shared/monitoring').MonitorInstallInput) => services.monitorAgentInstaller.install(input)))
+  ipcMain.handle(IPC.monitorHistory, safe((id: string, hours: number) => {
+    if (!/^[a-f0-9]{24}$/.test(id) || ![1, 24, 168, 720].includes(hours)) throw new Error('无效历史查询')
+    return services.monitoring.request<MonitorPoint[]>(`/v1/nodes/${id}/history?hours=${hours}`)
+  }))
+  ipcMain.handle(IPC.monitorAlerts, safe(() => services.monitoring.request<MonitorAlert[]>('/v1/alerts')))
 
   /* --------------------------- 对外能力 --------------------------- */
 

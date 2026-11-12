@@ -1,10 +1,10 @@
 # FreeRDP 内置桌面
 
-更新日期：2026-11-03。当前版本 0.6.15。Windows x64 内置桌面默认使用 FreeRDP；旧配置保留兼容读取，系统客户端入口仍可使用。远端文件复制采用 Windows OLE 虚拟文件，本机粘贴请求内容时才下载，无需手动接收。每个文件先完整缓存后交付只读流。
+更新日期：2026-11-09。当前版本 0.6.43。Windows x64 内置桌面默认使用 FreeRDP；旧配置保留兼容读取，系统客户端入口仍可使用。远端文件复制采用 Windows OLE 虚拟文件，本机粘贴请求内容时才下载，无需手动接收。每个文件先完整缓存后交付只读流。
 
 ## 使用方式
 
-下述能力包含于当前 0.6.15 安装包；旧版本需完整升级。
+下述能力包含于当前 0.6.43 安装包；旧版本需完整升级。
 
 1. Windows x64 直接打开原有 Windows / RDP 连接即可使用 FreeRDP，无需逐台切换引擎。
 2. 通常保留「TLS / NLA 优先」。原生连接在安全协商或 `ERRCONNECT_TLS_CONNECT_FAILED` 阶段失败时，会追加不含登录凭据的 X.224 探测；只有明确得到 `SSL_NOT_ALLOWED_BY_SERVER`（代码 2）或 Standard RDP Security 响应，才提示是否兼容。用户同意后只将当前服务器保存为旧版模式并自动重连；取消则保留 TLS / NLA，未同意前不会发起旧版登录。TLS 错误本身不是降级依据；明确的账号、证书拒绝和已连接后的运行时错误不进入自动兼容。
@@ -15,6 +15,13 @@
 4. 引擎未构建、依赖缺失或非 Windows x64 时，界面明确提示；不会偷偷降低安全层。系统客户端仍可使用。
 5. 三档画质仍按窗口、DPI 和像素上限自动计算。原生画布额外限制为 8192 × 8192 范围内、总计不超过 16M 像素，桌面缩放 100–200%，DeviceScaleFactor 固定 100。目标没有 Display Control 时保留已协商的桌面尺寸，不因放大窗口而断开。
 
+### 运行时中断与原会话恢复
+
+从 0.6.26 开始，已建立的 FreeRDP 会话只有在纯传输错误、没有服务端错误信息且有有效 ARC Cookie 时才恢复原会话：最多三次、退避 1/2/4 秒、总窗口 45 秒。收到其他连接接管、注销、管理员断开、ARC 拒绝或不同登录 ID 时停止；缺少 Cookie 时直接结束。恢复失败不回退普通密码登录。
+
+NLA 认证沿用原凭据，恢复的 Client Info 不设置 `INFO_AUTOLOGON`，也不发送普通用户名/域/密码。只有收到同一 ARC 登录 ID 的服务端恢复确认才结束恢复状态。恢复期间保留最后画面，暂停输入/剪贴板/分辨率发送，可点击“停止重连”；已连接后的传输错误不进入 TLS/NLA 降级流程。
+
+主进程在用户数据目录 `logs/freerdp-diagnostics.jsonl` 写入受限数值诊断，最多 1 MiB 加一份轮转，不持久化密码、ARC Cookie、剪贴板或屏幕数据。验证命令为 `node tools/verify-rdp-safe-resume.cjs`，具体证据与边界见 [0.6.26 验证](VALIDATION-0.6.43.md)。
 ### 双向文件剪贴板
 
 - 保持连接配置的「剪贴板重定向」开启，保存后重新连接；TLS / NLA 和明确选择的旧版安全层均接入相同文件通道，不额外开放端口。
@@ -83,9 +90,9 @@ npx electron-builder --win --x64 --publish never
 node tools/verify-release.cjs
 ```
 
-固定依赖为 FreeRDP **3.32.2**，commit **97eff6ddfbbfaa8e42a126d362686bd001ff8bdc**。首次从官方仓库下载到 `tmp/freerdp-source`，不将上游源码提交本仓库；已存在目录必须干净且 commit 完全匹配，脚本不会擅自覆盖它。
+固定依赖为 FreeRDP **3.32.2**，commit **97eff6ddfbbfaa8e42a126d362686bd001ff8bdc**。首次从官方仓库下载到 `tmp/freerdp-source`，不将上游源码提交本仓库；已存在目录的 commit 必须完全匹配。`tools/patch-freerdp-resume.cjs` 仅允许两个经过校验的恢复补丁：`libfreerdp/core/info.c` 在恢复时禁止普通 Client Info 自动登录/凭据回退，`libfreerdp/core/rdp.c` 将 ARC_STATUS 作为恢复拒绝处理。构建脚本验证原文件与精确补丁结果，拒绝其他上游源码变更。
 
-构建约束：GCC / MinGW 使用 Windows TLS 而非缺失的 C11 `threads.h`，关闭 Unix unwind。上游 `locale/keyboard.c` 的 `DWORD*` / `UINT32*` 在此工具链均为 32 位，但 GCC 15 默认将其类型差异视为错误；仅依赖库将此诊断保留为警告，自有宿主仍以 `-Wall -Wextra -Werror` 编译。没有修改上游源码。只构建客户端需要的 cliprdr / drdynvc / disp / rdpgfx，未启用磁盘、打印机、智能卡、音频等重定向。
+构建约束：GCC / MinGW 使用 Windows TLS 而非缺失的 C11 `threads.h`，关闭 Unix unwind。上游 `locale/keyboard.c` 的 `DWORD*` / `UINT32*` 在此工具链均为 32 位，但 GCC 15 默认将其类型差异视为错误；仅依赖库将此诊断保留为警告，自有宿主仍以 `-Wall -Wextra -Werror` 编译。除上述两处恢复补丁外不修改上游源码。只构建客户端需要的 cliprdr / drdynvc / disp / rdpgfx，未启用磁盘、打印机、智能卡、音频等重定向。
 
 输出位于 `out/native-freerdp/`，包含 exe、实际依赖 DLL、OpenSSL legacy provider、许可证和 SHA-256 清单；manifest 同时记录 OpenSSL / GCC 版本。legacy provider 是 NTLM / RDP 授权所需，不表示会自动启用旧 RDP 安全层。发布前仍应检查并更新构建环境的 OpenSSL 等依赖。
 
@@ -123,4 +130,4 @@ node tools/verify-rdo-import.cjs
 
 尚未验证：新增文件功能在实际 Windows 主机上的行为、各种域 / Kerberos / MFA / RD Gateway、生产 HTTP / SOCKS5 代理、H.264 / 多屏和长时间高负载稳定性。初版不支持音频、图片剪贴板、磁盘 / 打印机 / 智能卡重定向，不承诺比现有引擎更快。只要这些兼容性验证未完成，就应保留实验性标识与 IronRDP / 系统客户端回退。
 
-客户端加密备份 / 账号同步保留引擎设置。共享配置需独立账号服务同时更新白名单；客户端发布不会自动部署独立账号服务或修改线上数据库。安装与发布范围见 [0.6.15 更新说明](RELEASE-0.6.15.md)。
+客户端加密备份 / 账号同步保留引擎设置。共享配置需独立账号服务同时更新白名单；客户端发布不会自动部署独立账号服务或修改线上数据库。安装与发布范围见 [0.6.26 更新说明](RELEASE-0.6.26.md)。

@@ -7,6 +7,25 @@
  */
 
 export const IPC = {
+  monitorWindowsCommand: 'monitor:windows-command',
+  monitorWindowsBundle: 'monitor:windows-bundle',
+  monitorLocal: 'monitor:local',
+  monitorConfigure: 'monitor:configure',
+  monitorSaveEntry: 'monitor:save-entry',
+  monitorRemoveEntry: 'monitor:remove-entry',
+  monitorLocalHistory: 'monitor:local-history',
+  monitorNodes: 'monitor:nodes',
+  monitorTest: 'monitor:test',
+  monitorSaveNode: 'monitor:save-node',
+  monitorPrepareAgentNode: 'monitor:prepare-agent-node',
+  monitorRemoveNode: 'monitor:remove-node',
+  monitorSessionInfo: 'monitor:session-info',
+  monitorRotateToken: 'monitor:rotate-token',
+  monitorHistory: 'monitor:history',
+  monitorAlerts: 'monitor:alerts',
+  monitorAgentInstallInfo: 'monitor:agent-install-info',
+  monitorInstallAgent: 'monitor:install-agent',
+  monitorAgentInstallProgress: 'monitor:agent-install-progress',
   aiConfiguration: 'ai:configuration',
   aiSaveConfiguration: 'ai:save-configuration',
   aiTest: 'ai:test',
@@ -20,6 +39,12 @@ export const IPC = {
   aiDeleteConversation: 'ai:delete-conversation',
   aiSetPermissionMode: 'ai:set-permission-mode',
   accountStatus: 'account:status',
+  accountSwitch: 'account:switch',
+  accountRemove: 'account:remove',
+  accountChanged: 'account:changed',
+  monitorUnclaimed: 'monitor:unclaimed',
+  monitorClaim: 'monitor:claim',
+  monitorProbe: 'monitor:probe',
   accountOpenAdmin: 'account:open-admin',
   accountConfigure: 'account:configure',
   accountAuthenticate: 'account:authenticate',
@@ -80,6 +105,10 @@ export const IPC = {
   sshExec: 'ssh:exec',
   sshHostKeyDecision: 'ssh:host-key-decision',
 
+  /* Docker over the current SSH session */
+  dockerSnapshot: 'docker:snapshot',
+  dockerRemove: 'docker:remove',
+
   /* SFTP */
   sftpList: 'sftp:list',
   sftpReadFile: 'sftp:read-file',
@@ -121,17 +150,15 @@ export const IPC = {
   sharedDelete: 'shared:delete',
   sharedUsage: 'shared:usage',
 
-  /* 系统 VPN */
-  vpnList: 'vpn:list',
-  vpnConnect: 'vpn:connect',
-  vpnDisconnect: 'vpn:disconnect',
-
   /* XTerminal 配置导入 */
   xtScan: 'xt:scan',
   rdoScan: 'rdo:scan',
   xtApply: 'xt:apply',
   configurationPasswordStatus: 'configuration:password-status',
   configurationSavePassword: 'configuration:save-password',
+  configurationRestored: 'configuration:restored',
+  configurationMonitorExport: 'configuration:monitor-export',
+  configurationMonitorDecrypt: 'configuration:monitor-decrypt',
   configurationExport: 'configuration:export',
   configurationImport: 'configuration:import',
   webdavConfiguration: 'webdav:configuration',

@@ -5,16 +5,18 @@
  * 约定：所有跨组件的状态放这里，组件内部状态留在组件里。
  */
 import { create } from 'zustand'
+import { clearMonitorSnapshot } from '../features/monitor/monitor-cache'
 import type { Connection, ConnectionCheck, ExternalAccessConfig, SessionInfo } from '@shared/types'
 import type { OfficialAccountStatus } from '@shared/account'
 
 /** 会话标签页 */
 export interface Tab {
   id: string
-  kind: 'ssh' | 'rdp' | 'files' | 'monitor' | 'forwards' | 'settings' | 'ai' | 'external' | 'credentials' | 'servers' | 'account' | 'shared-servers' | 'shared-session'
+  kind: 'ssh' | 'rdp' | 'files' | 'monitoring' | 'forwards' | 'settings' | 'ai' | 'external' | 'credentials' | 'servers' | 'account' | 'shared-servers' | 'shared-session'
   title: string
   connectionId?: string
   sessionId?: string
+  monitorNodeId?: string
   shareId?: string
   shareKind?: 'ssh' | 'rdp'
   /** 连接中/出错时的提示 */
@@ -43,6 +45,7 @@ export interface ApprovalRequest {
 interface AppState {
   /* 应用 */
   ready: boolean
+  monitoringVisible: boolean
   vaultStatus: 'uninitialized' | 'locked' | 'unlocked'
 
   /* 数据 */
@@ -53,6 +56,10 @@ interface AppState {
   sessions: SessionInfo[]
   externalConfig: ExternalAccessConfig | null
   accountUser: OfficialAccountStatus['user']
+  accountServerUrl: string
+
+  monitorInstallConnectionId: string | null
+  monitorBatchConnectionIds: string[] | null
 
   /* 阻塞式交互 */
   hostKeyRequest: HostKeyRequest | null
@@ -60,6 +67,7 @@ interface AppState {
   approvals: ApprovalRequest[]
 
   /* 动作 */
+  setAccountStatus: (status: OfficialAccountStatus) => void
   setReady: (v: boolean) => void
   setVaultStatus: (s: AppState['vaultStatus']) => void
   setConnections: (c: Connection[]) => void
@@ -81,6 +89,7 @@ interface AppState {
 
 export const useApp = create<AppState>((set, get) => ({
   ready: false,
+  monitoringVisible: false,
   vaultStatus: 'uninitialized',
   connections: [],
   connectionChecks: {},
@@ -89,10 +98,24 @@ export const useApp = create<AppState>((set, get) => ({
   sessions: [],
   externalConfig: null,
   accountUser: null,
+  accountServerUrl: '',
+  monitorInstallConnectionId: null,
+  monitorBatchConnectionIds: null,
   hostKeyRequest: null,
   hostKeyQueue: [],
   approvals: [],
 
+  setAccountStatus: (status) => set(state => {
+    if(state.accountServerUrl!==status.serverUrl || state.accountUser?.id!==status.user?.id) { clearMonitorSnapshot(); queueMicrotask(()=>{ window.dispatchEvent(new Event('omnidesk:account-changed')); window.dispatchEvent(new Event('omnidesk:monitoring-changed')) }) }
+    return ({
+    accountUser: status.user,
+    accountServerUrl: status.serverUrl,
+    ...(state.accountServerUrl !== status.serverUrl || state.accountUser?.id !== status.user?.id ? { monitorInstallConnectionId: null, monitorBatchConnectionIds: null } : {}),
+    ...(!status.serverUrl.trim() ? {
+      tabs: state.tabs.filter(tab => tab.kind !== 'shared-servers'),
+      activeTabId: state.tabs.some(tab => tab.id === state.activeTabId && tab.kind === 'shared-servers') ? null : state.activeTabId
+    } : {})
+  })}),
   setReady: (v) => set({ ready: v }),
   setVaultStatus: (s) => set({ vaultStatus: s }),
   setConnections: (c) => set({ connections: c }),

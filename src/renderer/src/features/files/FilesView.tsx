@@ -401,11 +401,11 @@ export default function FilesView({ tab, compact = false, active = true }: { tab
 
 export function formatBytes(n: number): string {
   if (!Number.isFinite(n) || n < 0) return '—'
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  if (n < 1024 ** 3) return `${(n / 1024 / 1024).toFixed(1)} MB`
-  if (n < 1024 ** 4) return `${(n / 1024 ** 3).toFixed(2)} GB`
-  return `${(n / 1024 ** 4).toFixed(2)} TB`
+  if (n < 1024) return `${Math.round(n)} B`
+  if (n < 1024 * 1024) return `${Number((n / 1024).toFixed(1))} KB`
+  if (n < 1024 ** 3) return `${Number((n / 1024 / 1024).toFixed(1))} MB`
+  if (n < 1024 ** 4) return `${Number((n / 1024 ** 3).toFixed(2))} GB`
+  return `${Number((n / 1024 ** 4).toFixed(2))} TB`
 }
 
 function formatTime(ms: number): string {

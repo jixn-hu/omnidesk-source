@@ -1,5 +1,6 @@
+import { backupOptions, BACKUP_LABELS, type BackupOptions, type BackupSection, type BackupPreferences } from '@shared/backup.js'
 import { connectionKey, parseConnectionAddress } from '@shared/connection-identity.js'
-import { createCipheriv, createDecipheriv, randomBytes, randomUUID, scrypt } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, scrypt } from 'node:crypto'
 import { sharedConfiguration } from '@shared/shared-configuration.js'
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
@@ -19,6 +20,12 @@ interface Snapshot {
   connections: Connection[]
   sharedCredentials: SharedCredential[]
   credentials: Record<string, Credential>
+  modules?: Partial<Record<BackupSection, unknown>>
+}
+
+export interface BackupModules {
+  capture(options: BackupOptions): Partial<Record<BackupSection, unknown>>
+  prepare(modules: Partial<Record<BackupSection, unknown>>, connectionIds: Map<string, string>): { files: Record<string, string>; credentials: Record<string, Credential>; removeRefs: string[]; commit(): void; preferences?: BackupPreferences; details?: string[] }
 }
 
 function keyFor(password: string, salt: Buffer): Promise<Buffer> {
@@ -52,7 +59,7 @@ function validateSnapshot(input: unknown): Snapshot {
   if (raw.version !== 1 || !Array.isArray(raw.connections) || !Array.isArray(raw.sharedCredentials) || raw.connections.length > 10000 || raw.sharedCredentials.length > 10000) throw new Error('不支持的配置版本或记录数量过大')
   const credentials = Object.fromEntries(Object.entries(object(raw.credentials)).map(([ref, input]) => {
     identifier(ref)
-    if (['webdav-sync-password', 'configuration-backup-password', 'official-account-session', 'omnidesk-ai-api-key'].includes(ref)) throw new Error('备份不能覆盖本机同步登录凭据')
+    if (ref.startsWith('omnidesk-monitor-agent:') || ['webdav-sync-password', 'configuration-backup-password', 'official-account-session', 'omnidesk-ai-api-key', 'omnidesk-monitor-service'].includes(ref)) throw new Error('备份不能覆盖本机同步登录凭据')
     const value = object(input)
     const passphrase = value.passphrase ?? undefined
     if (typeof value.secret !== 'string' || value.secret.length > 1024 * 1024 || (passphrase !== undefined && typeof passphrase !== 'string')) throw new Error('凭据格式不正确')
@@ -93,6 +100,7 @@ function validateSnapshot(input: unknown): Snapshot {
       if (!['none', 'socks4', 'socks5', 'http'].includes(proxy.type)) throw new Error('代理类型不正确')
       result.proxy = { type: proxy.type, host: text(proxy.host, '代理地址'), port: proxy.type === 'none' ? 0 : port(proxy.port), username: optionalText(proxy.username, '代理账号'), password: optionalText(proxy.password, '代理密码') }
     }
+    // Preserve legacy backup metadata; system VPN integration has been removed.
     if (value.vpn !== undefined) {
       const vpn = object(value.vpn)
       if (vpn.disconnectAfter !== undefined && typeof vpn.disconnectAfter !== 'boolean') throw new Error('VPN 配置不正确')
@@ -143,7 +151,12 @@ function validateSnapshot(input: unknown): Snapshot {
   for (const records of [connections, sharedCredentials]) {
     if (new Set(records.map((record) => record.id)).size !== records.length) throw new Error('配置包含重复标识')
   }
-  return { version: 1, connections, sharedCredentials, credentials }
+  let modules: Snapshot['modules']
+  if (raw.modules !== undefined) {
+    modules = object(raw.modules)
+    if (Object.keys(modules).some(key => !Object.hasOwn(BACKUP_LABELS, key))) throw new Error('备份包含不支持的内容分区，请更新客户端后重试')
+  }
+  return { version: 1, connections, sharedCredentials, credentials, ...(modules ? { modules } : {}) }
 }
 
 export function writeConfigurationFile(path: string, contents: string | Buffer): void {
@@ -156,7 +169,7 @@ export function recoverConfigurationImport(directory: string): void {
   if (!existsSync(journal)) return
   const saved = object(JSON.parse(readFileSync(journal, 'utf8')))
   for (const name of Object.keys(saved)) {
-    if (![...FILES, 'webdav-sync.json', 'official-account.json', 'ai-settings.json'].includes(name)) throw new Error('配置恢复文件名不合法，未修改数据')
+    if (![...FILES, 'webdav-sync.json', 'official-account.json', 'ai-settings.json', 'ai-conversations.enc', 'monitoring.json', 'backup-preferences.json'].includes(name)) throw new Error('配置恢复文件名不合法，未修改数据')
     if (saved[name] !== null && typeof saved[name] !== 'string') throw new Error('配置恢复记录损坏，请保留数据目录并恢复备份')
     const path = join(directory, name)
     if (saved[name] === null) { if (existsSync(path)) unlinkSync(path) }
@@ -170,7 +183,7 @@ export function recoverConfigurationImport(directory: string): void {
 
 export function writeConfigurationTransaction(directory: string, files: Record<string, string>): void {
   const names = Object.keys(files)
-  if (!names.length || names.some((name) => ![...FILES, 'webdav-sync.json', 'official-account.json', 'ai-settings.json'].includes(name))) throw new Error('配置事务文件不合法')
+  if (!names.length || names.some((name) => ![...FILES, 'webdav-sync.json', 'official-account.json', 'ai-settings.json', 'ai-conversations.enc', 'monitoring.json', 'backup-preferences.json'].includes(name))) throw new Error('配置事务文件不合法')
   const journal = join(directory, JOURNAL)
   if (existsSync(journal)) throw new Error('存在未恢复的配置操作，请重启应用后再试')
   const originals = Object.fromEntries(names.map((name) => [name, existsSync(join(directory, name)) ? readFileSync(join(directory, name)).toString('base64') : null]))
@@ -186,8 +199,17 @@ export function writeConfigurationTransaction(directory: string, files: Record<s
 
 export class ConfigurationBackupService {
   private busy = false
+  modules?: BackupModules
+  onRestored?: (summary: ConfigurationSummary) => void
 
   constructor(private readonly directory: string, private readonly connections: ConnectionStore, private readonly shared: SharedCredentialStore, private readonly vault: VaultService, private readonly confirm: ConfirmConfiguration) {}
+
+  private fileState(): string {
+    return JSON.stringify(['vault.enc', 'connections.json', 'shared-credentials.json', 'monitoring.json', 'ai-settings.json', 'backup-preferences.json'].map(name => {
+      const path = join(this.directory, name)
+      return existsSync(path) ? createHash('sha256').update(readFileSync(path)).digest('hex') : null
+    }))
+  }
 
   hasSavedPassword(): boolean {
     return this.vault.status() === 'unlocked' && !!this.vault.getCredential('configuration-backup-password')?.secret
@@ -233,16 +255,19 @@ export class ConfigurationBackupService {
     return password
   }
 
-  async create(password: string): Promise<string> {
+  async create(password: string, input?: BackupOptions): Promise<string> {
     password = this.password(password)
     if (this.vault.status() !== 'unlocked') throw new Error('请先解锁保险箱，再备份密码和私钥')
+    const options = backupOptions(input)
     const connections = this.connections.list()
     const sharedCredentials = this.shared.list()
     const refs = new Set([...connections.flatMap((record) => [record.credentialRef, record.kind === 'ssh' ? record.jump?.credentialRef : undefined]), ...sharedCredentials.map((record) => record.credentialRef)].filter((ref): ref is string => !!ref))
     const credentials = Object.fromEntries([...refs].map((ref) => [ref, this.vault.getCredential(ref)]))
     const snapshot = validateSnapshot({ version: 1, connections, sharedCredentials, credentials })
+    if (options.sections.length && !this.modules) throw new Error('扩展备份服务尚未就绪')
+    if (options.sections.length) snapshot.modules = this.modules!.capture(options)
     const plaintext = Buffer.from(JSON.stringify(snapshot), 'utf8')
-    if (plaintext.length > LIMIT / 2) throw new Error('配置备份过大，请减少记录或私钥内容')
+    if (plaintext.length > LIMIT / 2) throw new Error('所选备份内容超过 8MB，请减少记录、私钥或取消勾选 AI 对话记录后重试')
     const salt = randomBytes(16)
     const iv = randomBytes(12)
     const key = await keyFor(password, salt)
@@ -254,11 +279,12 @@ export class ConfigurationBackupService {
     } finally { key.fill(0); plaintext.fill(0) }
   }
 
-  async restore(contents: string, password: string): Promise<ConfigurationSummary | null> {
+  async restore(contents: string, password: string, input?: BackupOptions): Promise<ConfigurationSummary | null> {
     if (this.busy) throw new Error('已有配置导入进行中，请稍后重试')
     this.busy = true
     try {
       if (this.vault.status() !== 'unlocked') throw new Error('请先解锁保险箱，再导入配置')
+      const options = backupOptions(input)
       if (Buffer.byteLength(contents) > LIMIT) throw new Error('配置文件过大')
       const box = object(JSON.parse(contents.replace(/^\uFEFF/, '')))
       if (box.format !== 'omnidesk-encrypted-configuration' || box.version !== 1 || box.kdf !== 'scrypt-32768-8-1') throw new Error('不是支持的 OmniDesk 加密备份；XTerminal 配置请使用专用导入入口')
@@ -291,17 +317,28 @@ export class ConfigurationBackupService {
         return true
       })
       const skipped = snapshot.connections.length - importedConnections.length
-      const summary = { connections: importedConnections.length, sharedCredentials: snapshot.sharedCredentials.length, skipped }
-      if (!await this.confirm('导入加密配置？', `包含 ${summary.connections} 条连接、${summary.sharedCredentials} 条公共凭据及其密码 / 私钥。\n\n同 ID 记录将更新；发现的 ${skipped} 条不同 ID、相同服务器连接将跳过，本地其他连接不会删除；已建立的会话不受影响。导入记录的外部访问授权关闭，主机指纹仍需本机确认。`)) return null
+      const connectionIds = new Map(snapshot.connections.map(record => [record.id, importedConnections.some(item => item.id === record.id) ? record.id : endpoints.get(connectionKey(record))!]))
+      const selected = Object.fromEntries(options.sections.filter(section => Object.hasOwn(snapshot.modules ?? {}, section)).map(section => [section, snapshot.modules![section]]))
+      const sections = Object.keys(selected) as BackupSection[]
+      if (sections.length && !this.modules) throw new Error('扩展备份服务尚未就绪')
+      const prepareModules = () => sections.length ? this.modules!.prepare(selected, connectionIds) : undefined
+      let extra = prepareModules()
+      const before = this.fileState()
+      const summary: ConfigurationSummary = { sections, ...(extra?.preferences ? { preferences: extra.preferences } : {}), connections: importedConnections.length, sharedCredentials: snapshot.sharedCredentials.length, skipped }
+      if (!await this.confirm('导入加密配置？', `包含 ${summary.connections} 条连接、${summary.sharedCredentials} 条公共凭据及其密码 / 私钥。\n可选内容：${sections.map(section => BACKUP_LABELS[section]).join('、') || '无（旧备份或未选择）'}。${extra?.details?.length ? '\n' + extra.details.join('\n') : ''}\n未选择的本机设置保持不变；AI 对话按 ID 合并，待确认操作不会执行。\n\n同 ID 记录将更新；发现的 ${skipped} 条不同 ID、相同服务器连接将跳过，本地其他连接不会删除；已建立的会话不受影响。导入记录的外部访问授权关闭，主机指纹仍需本机确认。`)) return null
       if (this.vault.status() !== 'unlocked') throw new Error('保险箱已锁定，未修改配置')
+      if (this.fileState() !== before) throw new Error('确认期间本机配置发生变化，请重新导入；未修改配置')
+      extra = prepareModules()
       if (snapshot.connections.some((record) => previous.some((local) => local.id === record.id && local.kind !== record.kind))) throw new Error('连接 ID 与本地不同协议的连接冲突，未导入')
       const merge = <RecordType extends { id: string }>(local: RecordType[], imported: RecordType[]) => [...new Map([...local, ...imported].map((record) => [record.id, record])).values()]
-      const prepared = this.vault.prepareCredentialImport(snapshot.credentials)
-      const files = { 'vault.enc': prepared.contents, 'shared-credentials.json': JSON.stringify({ version: 1, credentials: merge(this.shared.list(), snapshot.sharedCredentials) }), 'connections.json': JSON.stringify({ version: 1, connections: merge(previous, importedConnections) }) }
+      const prepared = this.vault.prepareCredentialImport({ ...snapshot.credentials, ...extra?.credentials }, extra?.removeRefs)
+      const files = { ...extra?.files, 'vault.enc': prepared.contents, 'shared-credentials.json': JSON.stringify({ version: 1, credentials: merge(this.shared.list(), snapshot.sharedCredentials) }), 'connections.json': JSON.stringify({ version: 1, connections: merge(previous, importedConnections) }) }
       writeConfigurationTransaction(this.directory, files)
       prepared.commit()
       this.connections.reload()
       this.shared.reload()
+      extra?.commit()
+      this.onRestored?.(summary)
       return summary
     } finally { this.busy = false }
   }

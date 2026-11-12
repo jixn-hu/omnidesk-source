@@ -2,6 +2,8 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type D
 import { useApp, useSessionForConnection } from '../store/app'
 import type { Connection } from '@shared/types'
 import Icon from './Icon'
+import { LayoutGroup } from 'motion/react'
+import NavSelection from './NavSelection'
 import { useAppearance } from '../store/appearance'
 import ConnectionCheckBadge from './ConnectionCheckBadge'
 import { formatConnectionAddress, matchesConnection } from '@shared/connection-identity'
@@ -30,6 +32,8 @@ interface Props {
 
 export default function Sidebar({ onEdit }: Props) {
   const connections = useApp((s) => s.connections)
+  const sharedServersVisible = useApp(state => !!state.accountServerUrl.trim())
+  const monitoringVisible = useApp(state => state.monitoringVisible)
   const layout = useAppearance(state => state.sidebarLayout)
   const openTab = useApp((s) => s.openTab)
   const activeTabId = useApp((s) => s.activeTabId)
@@ -38,7 +42,7 @@ export default function Sidebar({ onEdit }: Props) {
   const vaultStatus = useApp(state => state.vaultStatus)
   useEffect(() => {
     let active = true
-    void window.omnidesk.account.status().then(result => { if (active && result.ok) useApp.setState({ accountUser: result.data.user }) }).catch(() => {})
+    void window.omnidesk.account.status().then(result => { if (active && result.ok) useApp.getState().setAccountStatus(result.data) }).catch(() => {})
     return () => { active = false }
   }, [vaultStatus])
   const [folded, setFolded] = useState(() => localStorage.getItem('omnidesk.sidebar.folded') === 'true')
@@ -173,18 +177,19 @@ export default function Sidebar({ onEdit }: Props) {
     }
   }
 
-  if (folded) return <aside className="sidebar-rail">
+  if (folded) return <LayoutGroup id="workspace-sidebar-rail"><aside className="sidebar-rail">
     <button className="btn btn-ghost btn-icon" aria-label="展开侧栏" title="展开侧栏" onClick={() => fold(false)}><Icon name="chevron" size={18} /></button>
-    <button className="btn btn-ghost btn-icon" title="服务器管理" onClick={() => openTab({ id: 'tab-servers', kind: 'servers', title: '服务器管理', status: 'idle' })}><Icon name="server" size={18} /></button>
-    <button className="btn btn-ghost btn-icon" title="公共凭据" onClick={() => openTab({ id: 'tab-credentials', kind: 'credentials', title: '公共凭据', status: 'idle' })}><Icon name="key" size={18} /></button>
-    <button className="btn btn-ghost btn-icon" title="AI 助手" onClick={() => openTab({ id: 'tab-ai', kind: 'ai', title: 'AI 助手', status: 'idle' })}><Icon name="assistant" size={18} /></button>
-    <button className="btn btn-ghost btn-icon" title="设置与备份" onClick={() => openTab({ id: 'tab-settings', kind: 'settings', title: '设置', status: 'idle' })}><Icon name="settings" size={18} /></button>
-    <button className="btn btn-ghost btn-icon" title="共享服务器" aria-label="共享服务器" onClick={() => openTab({ id: 'tab-shared-servers', kind: 'shared-servers', title: '共享服务器', status: 'idle' })}><Icon name="layers" size={17} /></button>
-    <button className="btn btn-ghost btn-icon sidebar-account-entry" aria-label="账号与同步" title={accountUser ? accountUser.username + ' · 账号与同步' : '登录账号（可选）'} onClick={() => openTab({ id: 'tab-account', kind: 'account', title: '账号与同步', status: 'idle' })}><Icon name="user" size={17} /></button>
-  </aside>
+    <button className="btn motion-nav-item btn-ghost btn-icon" title="服务器管理" onClick={() => openTab({ id: 'tab-servers', kind: 'servers', title: '服务器管理', status: 'idle' })}><NavSelection active={activeTab?.kind === 'servers'} group="sidebar-rail" /><Icon name="server" size={18} /></button>
+    {monitoringVisible && <button className="btn motion-nav-item btn-ghost btn-icon" title="服务器监控" aria-label="服务器监控" onClick={() => openTab({ id: 'tab-monitoring', kind: 'monitoring', title: '服务器监控', status: 'idle' })}><NavSelection active={activeTab?.kind === 'monitoring'} group="sidebar-rail" /><Icon name="activity" size={18} /></button>}
+    <button className="btn motion-nav-item btn-ghost btn-icon" title="公共凭据" onClick={() => openTab({ id: 'tab-credentials', kind: 'credentials', title: '公共凭据', status: 'idle' })}><NavSelection active={activeTab?.kind === 'credentials'} group="sidebar-rail" /><Icon name="key" size={18} /></button>
+    <button className="btn motion-nav-item btn-ghost btn-icon" title="AI 助手" onClick={() => openTab({ id: 'tab-ai', kind: 'ai', title: 'AI 助手', status: 'idle' })}><NavSelection active={activeTab?.kind === 'ai'} group="sidebar-rail" /><Icon name="assistant" size={18} /></button>
+    <button className="btn motion-nav-item btn-ghost btn-icon" title="设置与备份" onClick={() => openTab({ id: 'tab-settings', kind: 'settings', title: '设置', status: 'idle' })}><NavSelection active={activeTab?.kind === 'settings'} group="sidebar-rail" /><Icon name="settings" size={18} /></button>
+    {sharedServersVisible && <button className="btn motion-nav-item btn-ghost btn-icon" title="共享服务器" aria-label="共享服务器" onClick={() => openTab({ id: 'tab-shared-servers', kind: 'shared-servers', title: '共享服务器', status: 'idle' })}><NavSelection active={activeTab?.kind === 'shared-servers'} group="sidebar-rail" /><Icon name="layers" size={17} /></button>}
+    <button className="btn motion-nav-item btn-ghost btn-icon sidebar-account-entry" aria-label="账号" title={accountUser ? accountUser.username + ' · 账号' : '登录账号（可选）'} onClick={() => openTab({ id: 'tab-account', kind: 'account', title: '账号', status: 'idle' })}><NavSelection active={activeTab?.kind === 'account'} group="sidebar-rail" /><Icon name="user" size={17} /></button>
+  </aside></LayoutGroup>
 
   return (
-    <DirectoryDrag.Provider value={drag}><aside className="sidebar" style={{ width }}>
+    <DirectoryDrag.Provider value={drag}><LayoutGroup id="workspace-sidebar"><aside className="sidebar" style={{ width }}>
       <div className="sidebar-header">
         <div className="sidebar-brand">
           <div className="sidebar-logo"><Icon name="layers" size={20} /></div>
@@ -206,8 +211,9 @@ export default function Sidebar({ onEdit }: Props) {
         <kbd title="Ctrl+Shift+K">⌃ K</kbd>
       </div>
 
-      <button className="btn sidebar-manager" onClick={() => openTab({ id: 'tab-servers', kind: 'servers', title: '服务器管理', status: 'idle' })}><Icon name="server" size={16} />服务器管理<span>{connections.length}</span></button>
-      <button className={`btn sidebar-manager shared-servers-entry ${activeTab?.kind === 'shared-servers' ? 'is-active' : ''}`} onClick={() => openTab({ id: 'tab-shared-servers', kind: 'shared-servers', title: '共享服务器', status: 'idle' })}><Icon name="layers" size={16} />共享服务器</button>
+      <button className={`btn motion-nav-item sidebar-manager ${activeTab?.kind === 'servers' ? 'is-active' : ''}`} onClick={() => openTab({ id: 'tab-servers', kind: 'servers', title: '服务器管理', status: 'idle' })}><NavSelection active={activeTab?.kind === 'servers'} group="sidebar-main" /><Icon name="server" size={16} />服务器管理<span>{connections.length}</span></button>
+      {monitoringVisible && <button className={`btn motion-nav-item sidebar-manager monitoring-entry ${activeTab?.kind === 'monitoring' ? 'is-active' : ''}`} onClick={() => openTab({ id: 'tab-monitoring', kind: 'monitoring', title: '服务器监控', status: 'idle' })}><NavSelection active={activeTab?.kind === 'monitoring'} group="sidebar-main" /><Icon name="activity" size={16} />服务器监控</button>}
+      {sharedServersVisible && <button className={`btn motion-nav-item sidebar-manager shared-servers-entry ${activeTab?.kind === 'shared-servers' ? 'is-active' : ''}`} onClick={() => openTab({ id: 'tab-shared-servers', kind: 'shared-servers', title: '共享服务器', status: 'idle' })}><NavSelection active={activeTab?.kind === 'shared-servers'} group="sidebar-main" /><Icon name="layers" size={16} />共享服务器</button>}
       <div className="sidebar-section-heading"><span>{query.trim() ? '搜索结果' : '连接目录'}</span><span>{matchedCount}</span></div>
 
       {directoryNotice && <div className={directoryNotice.error ? 'sidebar-directory-notice is-error' : 'sidebar-directory-notice'} role={directoryNotice.error ? 'alert' : 'status'}>{directoryNotice.text}<button aria-label="关闭目录提示" onClick={() => setDirectoryNotice(null)}>×</button></div>}
@@ -226,7 +232,7 @@ export default function Sidebar({ onEdit }: Props) {
           </div>
         )}
 
-        {layout === 'flat' ? <div className="sidebar-flat-list">{sections.flatMap(section => section.connections).map(connection => <ConnectionRow key={connection.id} conn={connection} active={activeTab?.connectionId === connection.id} onOpen={() => openConnection(connection)} onEdit={() => onEdit(connection.id)} />)}</div> : sections.filter(section => section.count > 0).map(section => {
+        {sections.filter(section => section.count > 0).map(section => {
           const sectionCollapsed = !query.trim() && collapsed.has(section.kind)
           return (
             <section className="sidebar-protocol" key={section.kind} data-protocol={section.kind} aria-label={section.label}>
@@ -235,39 +241,39 @@ export default function Sidebar({ onEdit }: Props) {
                 <span className={`sidebar-protocol-icon ${section.kind}`}><Icon name={section.kind === 'ssh' ? 'terminal' : 'monitor'} size={15} /></span>
                 <strong>{section.label}</strong><span className="sidebar-protocol-count">{section.count}</span>
               </button>
-              {!sectionCollapsed && <div className={layout === 'tree' ? 'sidebar-tree-children' : 'sidebar-grouped-list'}>{sortFolders(layout === 'tree' ? section.groups : layout === 'grouped' ? section.flatGroups : section.categories).map(folder => <ConnectionFolderBranch key={folder.path} folder={folder} kind={section.kind} collapsed={collapsed} searching={!!query.trim()} onToggle={toggleGroup} activeId={activeTab?.connectionId} onOpen={openConnection} onEdit={onEdit} />)}</div>}
+              {!sectionCollapsed && (layout === 'flat' ? <div className="sidebar-flat-list">{section.connections.map(connection => <ConnectionRow key={connection.id} conn={connection} active={activeTab?.connectionId === connection.id} onOpen={() => openConnection(connection)} onEdit={() => onEdit(connection.id)} />)}</div> : <div className={layout === 'tree' ? 'sidebar-tree-children' : 'sidebar-grouped-list'}>{sortFolders(layout === 'tree' ? section.groups : layout === 'grouped' ? section.flatGroups : section.categories).map(folder => <ConnectionFolderBranch key={folder.path} folder={folder} kind={section.kind} collapsed={collapsed} searching={!!query.trim()} onToggle={toggleGroup} activeId={activeTab?.connectionId} onOpen={openConnection} onEdit={onEdit} />)}</div>)}
             </section>
           )
         })}
       </div>
 
       <div className="sidebar-footer">
-        <button className={`btn btn-ghost ${activeTab?.kind === 'ai' ? 'is-active' : ''}`} onClick={() => openTab({ id: 'tab-ai', kind: 'ai', title: 'AI 助手', status: 'idle' })}><Icon name="assistant" size={17} />AI 助手<span className="sidebar-new-label">服务器 · 运维</span></button>
-        <button className={`btn btn-ghost ${activeTab?.kind === 'credentials' ? 'is-active' : ''}`} onClick={() => openTab({ kind: 'credentials', title: '公共凭据', status: 'idle', id: 'tab-credentials' })}><Icon name="key" size={17} />公共凭据<span className="sidebar-new-label">账号 · 密钥</span></button>
+        <button className={`btn motion-nav-item btn-ghost ${activeTab?.kind === 'ai' ? 'is-active' : ''}`} onClick={() => openTab({ id: 'tab-ai', kind: 'ai', title: 'AI 助手', status: 'idle' })}><NavSelection active={activeTab?.kind === 'ai'} group="sidebar-tools" /><Icon name="assistant" size={17} />AI 助手<span className="sidebar-new-label">服务器 · 运维</span></button>
+        <button className={`btn motion-nav-item btn-ghost ${activeTab?.kind === 'credentials' ? 'is-active' : ''}`} onClick={() => openTab({ kind: 'credentials', title: '公共凭据', status: 'idle', id: 'tab-credentials' })}><NavSelection active={activeTab?.kind === 'credentials'} group="sidebar-tools" /><Icon name="key" size={17} />公共凭据<span className="sidebar-new-label">账号 · 密钥</span></button>
         <button
-          className={`btn btn-ghost ${activeTab?.kind === 'external' ? 'is-active' : ''}`}
+          className={`btn motion-nav-item btn-ghost ${activeTab?.kind === 'external' ? 'is-active' : ''}`}
           onClick={() =>
             openTab({ kind: 'external', title: '开放能力', status: 'idle', id: 'tab-external' })
           }
         >
-          <Icon name="link" size={17} />开放能力<span className="sidebar-new-label">AI / API</span>
+          <NavSelection active={activeTab?.kind === 'external'} group="sidebar-tools" /><Icon name="link" size={17} />开放能力<span className="sidebar-new-label">AI / API</span>
         </button>
         <button
-          className={`btn btn-ghost ${activeTab?.kind === 'settings' ? 'is-active' : ''}`}
+          className={`btn motion-nav-item btn-ghost ${activeTab?.kind === 'settings' ? 'is-active' : ''}`}
           onClick={() =>
             openTab({ kind: 'settings', title: '设置', status: 'idle', id: 'tab-settings' })
           }
         >
-          <Icon name="settings" size={17} />设置
+          <NavSelection active={activeTab?.kind === 'settings'} group="sidebar-tools" /><Icon name="settings" size={17} />设置
         </button>
-        <button aria-label="账号与同步" title="可选功能 · 个人同步与配置共享，不影响本机连接" className={`btn btn-ghost sidebar-account-entry ${activeTab?.kind === 'account' ? 'is-active' : ''}`} onClick={() => openTab({ id: 'tab-account', kind: 'account', title: '账号与同步', status: 'idle' })}><Icon name="user" size={16} /><span>{accountUser?.username ?? '登录账号'}</span><small>{accountUser ? '账号与同步' : '可选'}</small></button>
+        <button aria-label="账号" title="可选功能 · 个人同步与配置共享，不影响本机连接" className={`btn motion-nav-item btn-ghost sidebar-account-entry ${activeTab?.kind === 'account' ? 'is-active' : ''}`} onClick={() => openTab({ id: 'tab-account', kind: 'account', title: '账号', status: 'idle' })}><NavSelection active={activeTab?.kind === 'account'} group="sidebar-tools" /><Icon name="user" size={16} /><span>{accountUser?.username ?? '登录账号'}</span><small>{accountUser ? '账号' : '可选'}</small></button>
       </div>
       <div className="sidebar-resize-handle" role="separator" aria-label="调整侧边栏宽度" aria-orientation="vertical" aria-valuemin={228} aria-valuemax={380} aria-valuenow={width} tabIndex={0}
         onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); event.preventDefault() }}
         onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) setWidth(Math.max(228, Math.min(380, event.clientX))) }}
         onPointerUp={(event) => { event.currentTarget.releasePointerCapture(event.pointerId); localStorage.setItem('omnidesk.sidebar.width', String(width)) }}
         onKeyDown={(event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); const next = Math.max(228, Math.min(380, width + (event.key === 'ArrowRight' ? 12 : -12))); setWidth(next); localStorage.setItem('omnidesk.sidebar.width', String(next)) } }} />
-    </aside></DirectoryDrag.Provider>
+    </aside></LayoutGroup></DirectoryDrag.Provider>
   )
 }
 
@@ -398,20 +404,6 @@ function ConnectionRow({
                   }}
                 >
                   文件管理
-                </button>
-                <button
-                  onClick={() => {
-                    setMenuOpen(false)
-                    openTab({
-                      kind: 'monitor',
-                      title: `${conn.name} · 监控`,
-                      connectionId: conn.id,
-                      sessionId: session!.id,
-                      status: 'connected'
-                    })
-                  }}
-                >
-                  服务器监控
                 </button>
                 <button
                   onClick={() => {

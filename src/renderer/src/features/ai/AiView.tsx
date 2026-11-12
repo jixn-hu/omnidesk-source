@@ -32,12 +32,13 @@ export default function AiView() {
   const end = useRef<HTMLDivElement>(null)
   const transcript = useRef<HTMLDivElement>(null)
   const busy = state.status !== 'idle' || sendingId === state.conversationId
+  const sending = sendingId === state.conversationId
+  const canSend = ready && !sending && (state.status === 'idle' || state.status === 'approval')
   const configured = !!configuration?.baseUrl && !!configuration?.model
-  const canCreate = state.permissionMode !== 'read'
   const shown = connections.filter(connection => matchesConnection(connection, query))
   const available = selected.filter(id => connections.some(connection => connection.id === id))
   const permission = aiPermissionModes.find(mode => mode.value === state.permissionMode)!
-  const examples = canCreate ? ['列出所有服务器，按分组整理给我看', '找到备注里有「代理池」的服务器，添加「已整理」标签', '新增一台 SSH 服务器连接资料'] : ['列出所有服务器，按分组整理给我看', '查找名称或备注中有「代理池」的服务器', '查看指定 IP 服务器的系统和资源状态']
+  const examples = ['列出所有服务器，按分组整理给我看', '找到备注里有「代理池」的服务器，添加「已整理」标签', '新增一台 SSH 服务器连接资料']
   const acceptState = useCallback((next: AiState) => {
     if (next.revision <= latestRevision.current) return
     latestRevision.current = next.revision
@@ -76,7 +77,7 @@ export default function AiView() {
     return () => observer.disconnect()
   }, [state.pending?.id, hostKey?.sessionId])
   const send = async () => {
-    if (busy || !text.trim() || !configured || !ready) return
+    if (!canSend || !text.trim() || !configured) return
     const id = state.conversationId
     setError(''); setSendingId(id)
     try {
@@ -125,7 +126,7 @@ export default function AiView() {
           {hostKey && <AiHostKeyCard request={hostKey} key={hostKey.sessionId} />}
           <div ref={end} />
         </div>
-        <div className="ai-composer"><label className="ai-composer-label" htmlFor="ai-task">你的任务 <span>{available.length ? `作用于 ${available.length} 台所选服务器` : '可检索全部本机服务器'}</span></label><textarea id="ai-task" aria-label="AI 任务" maxLength={12000} placeholder={state.pending || hostKey ? '请先在对话卡片中选择确定或取消' : configured ? canCreate ? '例如：找到 192.0.2.10，把备注改为维护中；或先查看所有服务器资料…' : '例如：查看所有服务器资料，或查询 192.0.2.10 的系统状态…' : '请先配置 AI 接口和模型'} value={text} disabled={busy || !ready} onChange={event => setText(event.target.value)} onKeyDown={event => {
+        <div className="ai-composer"><label className="ai-composer-label" htmlFor="ai-task">你的任务 <span>{available.length ? `作用于 ${available.length} 台所选服务器` : '可检索全部本机服务器'}</span></label><textarea id="ai-task" aria-label="AI 任务" maxLength={12000} placeholder={state.pending ? '可确认上方操作，或直接输入新的想法…' : hostKey ? '可先输入新的想法；发送前请完成或停止主机核验' : configured ? '例如：查看服务器状态，或把指定服务器的备注改为维护中…' : '请先配置 AI 接口和模型'} value={text} disabled={!ready || sending} onChange={event => setText(event.target.value)} onKeyDown={event => {
           if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
           if (event.ctrlKey || event.metaKey) {
             event.preventDefault()
@@ -138,7 +139,7 @@ export default function AiView() {
             event.preventDefault()
             if (!event.repeat) void send()
           }
-        }} /><div className="ai-composer-actions"><div className="ai-composer-options"><label className="ai-permission-select"><Icon name="shield" size={14} /><select aria-label="当前对话权限" disabled={busy || !ready} value={state.permissionMode} onChange={async event => { const result = await window.omnidesk.ai.setPermissionMode(event.target.value as AiPermissionMode, state.conversationId); if (result.ok) acceptState(result.data); else setError(result.message) }}>{aiPermissionModes.map(mode => <option key={mode.value} value={mode.value}>{mode.label}</option>)}</select></label><span className="ai-composer-hint">Enter 发送 · Ctrl + Enter 换行</span></div>{busy ? <button className="btn" onClick={async () => { const result = await window.omnidesk.ai.cancel(state.conversationId); if (!result.ok) setError(result.message) }}>停止任务</button> : <button className="btn btn-primary" disabled={!ready || !configured || !text.trim()} onClick={() => void send()}>发送任务<Icon name="arrow" size={15} /></button>}</div>{error && <p className="ai-feedback is-error" role="alert">{error}</p>}</div>
+        }} /><div className="ai-composer-actions"><div className="ai-composer-options"><label className="ai-permission-select"><Icon name="shield" size={14} /><select aria-label="当前对话权限" disabled={busy || !ready} value={state.permissionMode} onChange={async event => { const result = await window.omnidesk.ai.setPermissionMode(event.target.value as AiPermissionMode, state.conversationId); if (result.ok) acceptState(result.data); else setError(result.message) }}>{aiPermissionModes.map(mode => <option key={mode.value} value={mode.value}>{mode.label}</option>)}</select></label><span className="ai-composer-hint">Enter 发送 · Ctrl + Enter 换行</span></div>{busy ? <button className="btn" onClick={async () => { const result = await window.omnidesk.ai.cancel(state.conversationId); if (!result.ok) setError(result.message) }}>停止任务</button> : null}{(state.status === 'idle' || state.status === 'approval') && <button className="btn btn-primary" disabled={!canSend || !configured || !text.trim()} onClick={() => void send()}>发送任务<Icon name="arrow" size={15} /></button>}</div>{error && <p className="ai-feedback is-error" role="alert">{error}</p>}</div>
       </section>
     </div>
   </div>

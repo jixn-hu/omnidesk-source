@@ -51,6 +51,13 @@ typedef struct {
   HANDLE readerThread;
   volatile LONG stopped;
   volatile LONG certificateAccepted;
+  volatile LONG resuming;
+  volatile LONG resumeTimedOut;
+  BOOL resumeRejected;
+  UINT32 resumeLogonId;
+  UINT32 resumeAttempts;
+  HANDLE resumeFinished;
+  HANDLE resumeThread;
   Command* first;
   Command* last;
   UINT32 queuedBytes;
@@ -132,6 +139,8 @@ static BOOL emit(Host* host, BYTE kind, const BYTE* data, UINT32 length) {
   if (!result) InterlockedExchange(&host->stopped, 1);
   return result;
 }
+
+#include "safe-reconnect.h"
 
 static BOOL valid_size(UINT32 width, UINT32 height) {
   return width >= 200 && width <= 8192 && height >= 200 && height <= 8192 && (UINT64)width * height <= MAX_PIXELS;
@@ -217,6 +226,7 @@ static DWORD WINAPI read_commands(LPVOID argument) {
       free(data);
       continue;
     }
+    if (host->resuming) { SecureZeroMemory(data, length); free(data); continue; }
     Command* command = calloc(1, sizeof(Command));
     if (!command) { free(data); break; }
     command->data = data;
@@ -294,6 +304,14 @@ static UINT clipboard_ready(CliprdrClientContext* clipboard, const CLIPRDR_MONIT
   return result;
 }
 
+static void invalidate_remote_clipboard(Host* host) {
+  host->remoteClipboardGeneration++;
+  if (!host->remoteClipboardGeneration) host->remoteClipboardGeneration++;
+  host->remoteFileFormat = 0;
+  host->remoteTextFormat = FALSE;
+  host->requestedFilesGeneration = 0;
+}
+
 static UINT request_clipboard(Host* host) {
   if (host->pendingClipboardFormat) return CHANNEL_RC_OK;
   UINT32 format = 0;
@@ -317,11 +335,7 @@ static UINT clipboard_formats(CliprdrClientContext* clipboard, const CLIPRDR_FOR
   if (result != CHANNEL_RC_OK) return result;
   Host* host = clipboard->custom;
   EnterCriticalSection(&host->clipboardLock);
-  host->remoteClipboardGeneration++;
-  if (!host->remoteClipboardGeneration) host->remoteClipboardGeneration++;
-  host->remoteFileFormat = 0;
-  host->remoteTextFormat = FALSE;
-  host->requestedFilesGeneration = 0;
+  invalidate_remote_clipboard(host);
   for (UINT32 index = 0; index < formats->numFormats; index++) {
     const CLIPRDR_FORMAT* format = &formats->formats[index];
     if (format->formatId == CF_UNICODETEXT) host->remoteTextFormat = TRUE;
@@ -418,6 +432,7 @@ static BOOL clipboard_file_command(Host* host, const BYTE* data, UINT32 length) 
       memcpy(files, data + 8, length - 8);
       free(host->clipboardFiles); host->clipboardFiles = files; host->clipboardFilesBytes = length - 8;
       host->clipboardFileId = read_u32(data + 4);
+      invalidate_remote_clipboard(host);
       valid = announce_clipboard(host) == CHANNEL_RC_OK;
     } else valid = FALSE;
     UINT32 values[] = { read_u32(data + 4), valid };
@@ -496,6 +511,9 @@ static void channel_disconnected(void* context, const ChannelDisconnectedEventAr
   if (!strcmp(arguments->name, CLIPRDR_SVC_CHANNEL_NAME)) {
     EnterCriticalSection(&host->clipboardLock);
     host->clipboard = NULL; host->clipboardReady = FALSE;
+    invalidate_remote_clipboard(host);
+    host->pendingClipboardFormat = 0;
+    host->pendingClipboardGeneration = 0;
     LeaveCriticalSection(&host->clipboardLock);
   }
   else if (!strcmp(arguments->name, DISP_DVC_CHANNEL_NAME)) { host->display = NULL; host->displayReady = FALSE; }
@@ -558,6 +576,7 @@ static void client_free(freerdp* instance, rdpContext* context) {
     SecureZeroMemory(host->clipboardText, host->clipboardBytes);
     free(host->clipboardText);
   }
+  finish_resume_watchdog(host);
   if (host->readerThread) CloseHandle(host->readerThread);
   if (host->commandEvent) CloseHandle(host->commandEvent);
   if (host->certificateEvent) CloseHandle(host->certificateEvent);
@@ -573,7 +592,7 @@ int main(int argc, char** argv) {
   int clipboardResult = file_clipboard_cli(argc, argv);
   if (clipboardResult >= 0) return clipboardResult;
   if (argc == 2 && !strcmp(argv[1], "--version")) {
-    printf("OmniDesk FreeRDP %s protocol=5\n", FREERDP_VERSION_FULL);
+    printf("OmniDesk FreeRDP %s protocol=6\n", FREERDP_VERSION_FULL);
     return 0;
   }
   if (argc != 1) return 2;
@@ -604,20 +623,25 @@ int main(int argc, char** argv) {
     goto done;
   }
   error = FREERDP_ERROR_SUCCESS;
-  while (!host->stopped && !freerdp_shall_disconnect_context(context)) {
+  while (!host->stopped) {
     HANDLE handles[MAXIMUM_WAIT_OBJECTS];
     DWORD count = freerdp_get_event_handles(context, handles, MAXIMUM_WAIT_OBJECTS - 1);
     if (!count || count >= MAXIMUM_WAIT_OBJECTS) { error = FREERDP_ERROR_CONNECT_FAILED; break; }
     handles[count] = host->commandEvent;
-    DWORD waited = WaitForMultipleObjects(count + 1, handles, FALSE, INFINITE);
-    if (waited == WAIT_FAILED || !drain_commands(host) || !freerdp_check_event_handles(context)) {
+    DWORD waited = WaitForMultipleObjects(count + 1, handles, FALSE, 1000);
+    if (waited == WAIT_FAILED || !drain_commands(host) || !freerdp_check_event_handles(context) || freerdp_shall_disconnect_context(context)) {
       error = freerdp_get_last_error(context);
       if (!error) error = FREERDP_ERROR_CONNECT_FAILED;
+      emit_diagnostic(host, 1, error);
+      if (try_session_resume(host, error)) { error = FREERDP_ERROR_SUCCESS; continue; }
+      if (host->resuming) error = freerdp_get_last_error(context) ? freerdp_get_last_error(context) : error;
       break;
     }
   }
   if (!error) error = freerdp_get_last_error(context);
 done:
+  emit_diagnostic(host, 4, error);
+  finish_resume_watchdog(host);
   if (error == FREERDP_ERROR_LOGOFF_BY_USER || error == FREERDP_ERROR_RPC_INITIATED_LOGOFF || error == FREERDP_ERROR_RPC_INITIATED_DISCONNECT_BY_USER) error = FREERDP_ERROR_SUCCESS;
   if (connected) release_inputs(host);
   BOOL cancelled = host->stopped;
@@ -628,7 +652,7 @@ done:
     if (WaitForSingleObject(host->readerThread, 5000) != WAIT_OBJECT_0) ExitProcess(4);
   }
   if (!cancelled && error && error != FREERDP_ERROR_SUCCESS) {
-    const char* name = freerdp_get_last_error_name(error);
+    const char* name = host->resumeRejected ? "OMNIDESK_SESSION_RESUME_REJECTED" : host->resumeTimedOut ? "OMNIDESK_SESSION_RESUME_TIMEOUT" : freerdp_get_last_error_name(error);
     size_t length = name ? strlen(name) : 0;
     BYTE payload[260] = { 0 };
     if (length > sizeof(payload) - 4) length = sizeof(payload) - 4;
@@ -662,6 +686,7 @@ static BOOL post_connect(freerdp* instance) {
   if (!valid_size(width, height) || !gdi_init(instance, PIXEL_FORMAT_RGBA32)) return FALSE;
   context->update->BeginPaint = begin_paint;
   context->update->EndPaint = end_paint;
+  context->update->SaveSessionInfo = session_resume_info;
   context->update->DesktopResize = desktop_resize;
   rdpPointer pointer = { 0 };
   pointer.size = sizeof(rdpPointer);
@@ -781,6 +806,7 @@ static BOOL apply_command(Host* host, const BYTE* data, UINT32 length) {
     host->clipboardBytes = ((UINT32)count + 1) * 2;
     free(host->clipboardFiles); host->clipboardFiles = NULL; host->clipboardFilesBytes = 0;
     host->clipboardFileId = 0;
+    invalidate_remote_clipboard(host);
     UINT result = announce_clipboard(host);
     LeaveCriticalSection(&host->clipboardLock);
     return result == CHANNEL_RC_OK;
@@ -799,7 +825,7 @@ static BOOL drain_commands(Host* host) {
     } else ResetEvent(host->commandEvent);
     LeaveCriticalSection(&host->queueLock);
     if (!command) return TRUE;
-    BOOL result = apply_command(host, command->data, command->length);
+    BOOL result = host->resuming || apply_command(host, command->data, command->length);
     SecureZeroMemory(command->data, command->length);
     free(command->data);
     free(command);
@@ -882,7 +908,7 @@ static BOOL read_configuration(Host* host) {
     freerdp_settings_set_bool(settings, FreeRDP_NetworkAutoDetect, FALSE) &&
     freerdp_settings_set_bool(settings, FreeRDP_SupportHeartbeatPdu, FALSE) &&
     freerdp_settings_set_bool(settings, FreeRDP_SupportMultitransport, FALSE) &&
-    freerdp_settings_set_bool(settings, FreeRDP_AutoReconnectionEnabled, FALSE) &&
+    freerdp_settings_set_bool(settings, FreeRDP_AutoReconnectionEnabled, TRUE) &&
     freerdp_settings_set_uint32(settings, FreeRDP_TcpConnectTimeout, 30000) &&
     freerdp_settings_set_uint32(settings, FreeRDP_ProxyType, proxy ? proxy : PROXY_TYPE_IGNORE);
   if (result && proxy) result = freerdp_settings_set_string(settings, FreeRDP_ProxyHostname, strings[4]) &&

@@ -1,3 +1,4 @@
+import { normalizeAppearance, useAppearance } from './store/appearance'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { useApp } from './store/app'
 import Sidebar from './components/Sidebar'
@@ -11,7 +12,9 @@ import ImportDialog from './features/import/ImportDialog'
 import TerminalView from './features/terminal/TerminalView'
 import DesktopView from './features/desktop/DesktopView'
 import FilesView from './features/files/FilesView'
-import MonitorView from './features/monitor/MonitorView'
+import MonitorDashboard from './features/monitor/MonitorDashboard'
+import MonitorAgentDialog from './features/monitor/MonitorAgentDialog'
+import MonitorBatchInstallDialog from './features/monitor/MonitorBatchInstallDialog'
 import ForwardsView from './features/forwards/ForwardsView'
 import ExternalView from './features/external/ExternalView'
 import SettingsView from './features/settings/SettingsView'
@@ -32,6 +35,20 @@ import './styles/account.css'
 const SharedSessionView = lazy(() => import('./features/account/SharedSessionView'))
 
 export default function App() {
+  useEffect(()=>window.omnidesk.account.onChanged(status=>useApp.getState().setAccountStatus(status)),[])
+  useEffect(() => window.omnidesk.configuration.onRestored(summary => {
+    void window.omnidesk.connections.list().then(result => { if (result.ok) useApp.getState().setConnections(result.data) })
+    if (summary.preferences) {
+      useAppearance.getState().setPreferences(normalizeAppearance(summary.preferences.appearance))
+      localStorage.setItem('omnidesk.monitor.view', summary.preferences.monitorView)
+    }
+    window.dispatchEvent(new Event('omnidesk:monitoring-changed'))
+    window.dispatchEvent(new CustomEvent('omnidesk:backup-restored', { detail: summary.sections ?? [] }))
+  }), [])
+
+  const accountScope=useApp(s=>s.accountServerUrl+'|'+(s.accountUser?.id??'local'))
+  const monitorInstallConnectionId = useApp(state => state.monitorInstallConnectionId)
+  const monitorBatchConnectionIds = useApp(state => state.monitorBatchConnectionIds)
   const [ready, setReady] = useState(false)
   const vaultStatus = useApp((s) => s.vaultStatus)
   const setVaultStatus = useApp((s) => s.setVaultStatus)
@@ -130,6 +147,26 @@ export default function App() {
     return () => unsubs.forEach((u) => u())
   }, [setVaultStatus, setConnections, setSessions, setExternalConfig, setHostKeyRequest, pushApproval])
 
+  useEffect(() => {
+    if (vaultStatus !== 'unlocked') { useApp.setState({ monitoringVisible: false }); return }
+    let alive = true, revision = 0
+    const refreshMonitoring = async () => {
+      const request = ++revision
+      try {
+        const result = await window.omnidesk.monitoring.local()
+        if (!alive || request !== revision) return
+        const visible = result.ok && result.data.config.enabled && !!result.data.config.url.trim()
+        useApp.setState(state => ({ monitoringVisible: visible, ...(!visible ? {
+          tabs: state.tabs.filter(tab => tab.kind !== 'monitoring'),
+          activeTabId: state.tabs.some(tab => tab.id === state.activeTabId && tab.kind === 'monitoring') ? null : state.activeTabId
+        } : {}) }))
+      } catch { if (alive && request === revision) useApp.setState({ monitoringVisible: false }) }
+    }
+    void refreshMonitoring()
+    window.addEventListener('omnidesk:monitoring-changed', refreshMonitoring)
+    return () => { alive = false; window.removeEventListener('omnidesk:monitoring-changed', refreshMonitoring) }
+  }, [vaultStatus])
+
   /* 保险箱未解锁时，先走解锁流程 */
   if (!ready) {
     return <div className="boot-splash">正在启动…</div>
@@ -169,7 +206,7 @@ export default function App() {
             {tab.kind === 'shared-session' ? <Suspense fallback={null}><SharedSessionView tab={tab} active={tab.id === activeTabId} /></Suspense> : tab.kind === 'ssh' ? <TerminalView tab={tab} active={tab.id === activeTabId} /> : <DesktopView tab={tab} active={tab.id === activeTabId} />}
           </div>)}
           {activeTab?.kind === 'files' && <FilesView key={activeTab.id} tab={activeTab} />}
-          {activeTab?.kind === 'monitor' && <MonitorView key={activeTab.id} tab={activeTab} />}
+          {activeTab?.kind === 'monitoring' && <MonitorDashboard key={accountScope} initialNodeId={activeTab.monitorNodeId} />}
           {activeTab?.kind === 'forwards' && <ForwardsView key={activeTab.id} tab={activeTab} />}
           {activeTab?.kind === 'external' && <ExternalView />}
           {activeTab?.kind === 'settings' && <SettingsView />}
@@ -177,7 +214,7 @@ export default function App() {
           {tabs.filter(tab => tab.kind === 'servers').map(tab => <div className="session-panel" key={tab.id} hidden={tab.id !== activeTabId}><ServersView active={tab.id === activeTabId} onNew={() => newConnection()} onImport={() => setImportOpen(true)} onEdit={id => { setEditingId(id); setEditorOpen(true) }} /></div>)}
           {activeTab?.kind === 'credentials' && <CredentialsView />}
           {activeTab?.kind === 'account' && <AccountView />}
-          {activeTab?.kind === 'shared-servers' && <SharedServersView />}
+          {activeTab?.kind === 'shared-servers' && <SharedServersView key={accountScope} />}
         </div>
 
         <StatusBar />
@@ -193,6 +230,10 @@ export default function App() {
 
       {importOpen && <ImportDialog onClose={() => setImportOpen(false)} />}
 
+      {monitorBatchConnectionIds && <MonitorBatchInstallDialog key={accountScope} connectionIds={monitorBatchConnectionIds} onClose={() => useApp.setState({ monitorBatchConnectionIds: null })} />}
+      {monitorInstallConnectionId && <MonitorAgentDialog key={accountScope + '|' + monitorInstallConnectionId} connectionId={monitorInstallConnectionId}
+        onClose={() => useApp.setState({ monitorInstallConnectionId: null })}
+        onChanged={() => window.dispatchEvent(new Event('omnidesk:monitor-nodes-changed'))} />}
       <HostKeyDialog />
       <ApprovalToasts />
       <SoftwareUpdateNotice />
@@ -208,7 +249,11 @@ function WelcomePanel({ onNew }: { onNew: (kind?: 'ssh' | 'rdp') => void }) {
 
   const sessions = useApp((state) => state.sessions)
   const tabs = useApp((state) => state.tabs)
-  const quick = [...connections].sort((first, second) => second.updatedAt - first.updatedAt).slice(0, 8)
+  const directories = (['ssh', 'rdp'] as const).map(kind => ({ kind, label: kind === 'ssh' ? 'SSH 终端' : 'RDP 桌面', connections: connections.filter(item => item.kind === kind).sort((first, second) => second.updatedAt - first.updatedAt) })).filter(directory => directory.connections.length > 0)
+  const [collapsed, setCollapsed] = useState<string[]>(() => {
+    try { const saved: unknown = JSON.parse(localStorage.getItem('omnidesk.home.collapsed') ?? '[]'); return Array.isArray(saved) ? saved.filter((value): value is string => value === 'ssh' || value === 'rdp') : [] } catch { return [] }
+  })
+  const toggleDirectory = (kind: string) => setCollapsed(current => { const next = current.includes(kind) ? current.filter(item => item !== kind) : [...current, kind]; localStorage.setItem('omnidesk.home.collapsed', JSON.stringify(next)); return next })
   const connected = sessions.filter((session) => session.status === 'connected').length + tabs.filter((tab) => tab.kind === 'rdp' && tab.status === 'connected').length
   const [showGuide, setShowGuide] = useState(() => {
     const saved = localStorage.getItem('omnidesk.quick-start')
@@ -234,9 +279,11 @@ function WelcomePanel({ onNew }: { onNew: (kind?: 'ssh' | 'rdp') => void }) {
         </div>}
         {(!showGuide || connections.length > 0) && <div className="welcome-columns"><section className="welcome-connections"><div className="section-heading"><h2>连接工作区 <span>{connections.length}</span></h2><button className="text-link" onClick={() => onNew()}>添加连接 <Icon name="plus" size={14} /></button></div>
 
-        {quick.length > 0 ? (
+        {directories.length > 0 ? (
           <div className="welcome-list">
-            {quick.map((c) => (
+            {directories.map(directory => <section className="welcome-directory" key={directory.kind} aria-label={directory.label}>
+              <button className="welcome-directory-heading" aria-expanded={!collapsed.includes(directory.kind)} aria-controls={`home-directory-${directory.kind}`} onClick={() => toggleDirectory(directory.kind)}><Icon name="folder" size={18} /><strong>{directory.label}</strong><span>{directory.connections.length}</span><Icon name="chevron" size={15} /></button>
+              <div id={`home-directory-${directory.kind}`} hidden={collapsed.includes(directory.kind)}>{directory.connections.map((c) => (
               <button
                 key={c.id}
                 className="welcome-connection-row"
@@ -253,7 +300,7 @@ function WelcomePanel({ onNew }: { onNew: (kind?: 'ssh' | 'rdp') => void }) {
                 <span className="welcome-connection-detail"><strong>{c.name}</strong><span className="mono">{c.sharedCredentialId ? '共享账号 · ' : `${c.username}@`}{c.host}:{c.port}</span></span>
                 <span className="connection-group">{c.group || '未分组'}</span><span className={`welcome-card-kind ${c.kind}`}>{c.kind.toUpperCase()}</span><Icon name="arrow" size={16} />
               </button>
-            ))}
+            ))}</div></section>)}
           </div>
         ) : (
           <div className="welcome-empty">

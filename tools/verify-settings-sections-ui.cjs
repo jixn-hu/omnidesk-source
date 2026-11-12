@@ -5,7 +5,7 @@ const { _electron } = require('playwright')
 const root = path.resolve(__dirname, '..')
 const version = require('../package.json').version
 const directory = fs.mkdtempSync(path.join(root, 'tmp/settings-sections-ui-'))
-const sectionIds = ['appearance', 'ai', 'backup', 'updates', 'security', 'vpn', 'shortcuts', 'about']
+const sectionIds = ['appearance', 'ai', 'monitoring', 'backup', 'updates', 'security', 'shortcuts', 'about']
 const errors = []
 let application, page
 const section = id => page.locator(`[data-settings-section="${id}"]`)
@@ -65,13 +65,15 @@ async function main() {
     return { credentials: await window.omnidesk.shared.list(), connections: await window.omnidesk.connections.list() }
   })
   await settings()
+  assert.equal(await section('vpn').count(), 0)
+  assert.equal(await page.evaluate(() => 'vpn' in window.omnidesk), false)
   assert.deepEqual(await page.locator('[data-settings-section]').evaluateAll(nodes => nodes.map(node => node.dataset.settingsSection)), sectionIds)
   for (const id of sectionIds) await expanded(id, false)
   assert.equal(await page.getByText('公共凭据 · 共享账号与凭证', { exact: true }).count(), 0)
   assert.equal(await page.getByRole('button', { name: '管理公共凭据 →', exact: true }).count(), 0)
   await noOverflow()
   await screenshot('01-default-collapsed.png')
-  console.log('PASS eight collapsed groups by default, duplicate credential shortcut removed, compact overview')
+  console.log(`PASS ${sectionIds.length} collapsed groups by default, duplicate credential shortcut removed, compact overview`)
 
   await page.locator('.sidebar-footer').getByRole('button', { name: /^公共凭据/ }).click()
   await page.getByRole('heading', { name: '公共凭据', exact: true }).waitFor()
@@ -99,7 +101,7 @@ async function main() {
 
   await toggle('backup', true)
   await page.locator('#configuration-password').fill('synthetic-backup-password')
-  await page.getByRole('tab', { name: 'WebDAV 云端', exact: true }).click()
+  await page.getByRole('tab', { name: 'WebDAV', exact: true }).click()
   await page.locator('#webdav-url').fill('https://dav.example.test/qa/')
   await page.locator('#webdav-username').fill('qa-draft')
   await page.locator('#webdav-password').fill('synthetic-webdav-password')
@@ -114,14 +116,10 @@ async function main() {
   await page.locator('.modal:visible').waitFor()
   await page.locator('.modal:visible').getByRole('button', { name: '取消', exact: true }).click()
   await toggle('security', false)
-  await toggle('vpn', true)
-  await section('vpn').getByRole('button', { name: '刷新状态', exact: true }).click()
-  await section('vpn').getByText('正在读取系统 VPN 列表…', { exact: true }).waitFor({ state: 'hidden' })
-  await toggle('vpn', false)
   await section('shortcuts').locator(':scope > summary').focus()
   await page.keyboard.press('Enter'); await expanded('shortcuts', true)
   await page.keyboard.press('Space'); await expanded('shortcuts', false)
-  console.log('PASS retained backup/WebDAV drafts, protection dialog cancel, read-only VPN refresh and keyboard toggles')
+  console.log('PASS retained backup/WebDAV drafts, protection dialog cancel, removed VPN interface and keyboard toggles')
 
   for (const id of sectionIds) await toggle(id, false)
   await updateFixture('9.9.91')

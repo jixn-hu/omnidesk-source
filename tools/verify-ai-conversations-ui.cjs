@@ -20,7 +20,7 @@ const model = createServer(async (request, response) => {
     if (task.startsWith('后台任务')) message = await new Promise(resolve => pending.set(task, resolve))
     else if (task === '新增测试服务器' && body.messages.at(-1).role === 'user') {
       const names = body.tools.map(item => item.function.name)
-      assert(names.includes('create_server') && !names.includes('run_ssh') && !names.includes('delete_server'))
+      assert(names.includes('create_server') && names.includes('run_ssh') && names.includes('delete_server'))
       message = tool('create_server', { kind: 'ssh', name: 'AI 新增资料', host: '192.0.2.99', port: 22, username: 'qa', tags: ['新增'], note: '合成测试资料' })
     } else if (task.startsWith('删除测试服务器') && body.messages.at(-1).role === 'user') {
       const listed = JSON.parse(fs.readFileSync(path.join(profile, 'connections.json'), 'utf8')).connections
@@ -118,7 +118,7 @@ async function main() {
   await send('新增测试服务器'); await waitIdle(third)
   await page.getByLabel('选择 AI 新增资料', { exact: true }).waitFor()
   await page.getByText('新增资料已完成，请在编辑器补充凭据。', { exact: true }).waitFor()
-  await page.getByLabel('当前对话权限').selectOption('full')
+  await page.getByLabel('当前对话权限').selectOption('edit')
   await send('删除测试服务器：取消一次')
   const confirmation = page.getByRole('region', { name: '服务器删除确认', exact: true }).filter({ has: page.getByRole('button', { name: '确认删除', exact: true }) })
   await confirmation.waitFor()

@@ -1,0 +1,111 @@
+# Browser QA for the actual React dialog, with synthetic IPC and saved servers.
+import json, os, subprocess
+from pathlib import Path
+from playwright.sync_api import sync_playwright, expect
+ROOT = Path(__file__).resolve().parents[1]
+result = subprocess.run(['node', str(ROOT/'tools/prepare-monitor-reinstall-ui.cjs')], cwd=ROOT, env=os.environ, capture_output=True, text=True, check=True)
+area = Path(result.stdout.strip().splitlines()[-1])
+with sync_playwright() as p:
+    browser = p.chromium.launch(channel='msedge', headless=True)
+    page = browser.new_page(viewport={'width':960,'height':820})
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    page.goto((area/'index.html').as_uri())
+    page.wait_for_load_state('networkidle')
+    page.screenshot(path=str(area/'linux-reinstall.png'), full_page=True)
+    dialog = page.get_by_role('dialog')
+    target = page.get_by_label('采集端目标服务器')
+    expect(target).to_have_value('cloud')
+    expect(dialog.locator('.monitor-install-account dd').nth(1)).to_have_text('jixn')
+    account_rows = dialog.locator('.monitor-install-account > div')
+    assert account_rows.count() == 2
+    for index in range(2):
+        label = account_rows.nth(index).locator('dt').bounding_box()
+        value = account_rows.nth(index).locator('dd').bounding_box()
+        assert value['x'] >= label['x'] + label['width']
+    primary = dialog.get_by_role('button', name='更换令牌并安装', exact=True)
+    expect(primary).to_be_disabled()
+    dialog.get_by_role('checkbox').check()
+    primary.click()
+    expect(dialog.get_by_text('确认覆盖已有监控', exact=True)).to_be_visible()
+    assert len(page.evaluate('window.qa.calls')) == 1
+    assert 'replaceBinding' not in page.evaluate('window.qa.calls[0]')
+    page.screenshot(path=str(area/'linux-replace-confirmation.png'), full_page=True)
+    dialog.get_by_role('button', name='取消覆盖', exact=True).click()
+    expect(dialog.locator('.monitor-install-replacement')).to_have_count(0)
+    assert len(page.evaluate('window.qa.calls')) == 1
+    dialog.get_by_role('button', name='更换令牌并安装', exact=True).click()
+    dialog.get_by_role('button', name='确认覆盖并安装', exact=True).click()
+    expect(dialog.get_by_text('本次安装已成功上报', exact=True)).to_be_visible()
+    calls = page.evaluate('window.qa.calls')
+    assert len(calls) == 3 and calls[-1]['replaceBinding']['nodeId'] == 'b'*24
+    assert calls[-1]['replaceBinding']['serverUrl'] == 'https://old.example.test/v1/monitor'
+    # Sudo challenge, wrong password, retry, ephemeral clearing and user fallback.
+    page.evaluate('window.qa.open({hasToken:true,sudo:true})')
+    dialog.get_by_role('button', name='安装采集端', exact=True).click()
+    secret = dialog.get_by_label('sudo 密码', exact=True)
+    expect(secret).to_be_visible()
+    sudo_button = dialog.get_by_role('button', name='使用 sudo 密码安装', exact=True)
+    expect(sudo_button).to_be_disabled()
+    page.screenshot(path=str(area/'linux-sudo-password.png'), full_page=True)
+    secret.fill('wrong-password'); sudo_button.click()
+    expect(dialog.get_by_role('status')).to_contain_text('sudo 提权失败')
+    expect(secret).to_have_value(''); expect(sudo_button).to_be_disabled()
+    secret.fill('qa-sudo-password'); sudo_button.click()
+    expect(dialog.get_by_role('status')).to_contain_text('本次安装已成功上报')
+    expect(secret).to_have_value('')
+    assert page.evaluate('window.qa.calls.at(-1).sudoPassword') == 'qa-sudo-password'
+    page.evaluate('window.qa.open({hasToken:true,sudo:true})')
+    dialog.get_by_role('button', name='安装采集端', exact=True).click()
+    secret.fill('must-be-cleared')
+    dialog.get_by_label('Linux 安装方式').select_option('user')
+    expect(secret).to_have_count(0)
+    dialog.get_by_role('button', name='安装采集端', exact=True).click()
+    expect(dialog.get_by_role('status')).to_contain_text('用户级安装已成功上报')
+    assert 'sudoPassword' not in page.evaluate('window.qa.calls.at(-1)')
+    page.evaluate('window.qa.open({hasToken:true,sudo:true})')
+    dialog.get_by_role('button', name='安装采集端', exact=True).click()
+    secret.fill('must-be-cleared')
+    target.select_option('windows')
+    expect(secret).to_have_count(0)
+    target.select_option('cloud')
+    expect(secret).to_have_count(0)
+    # Ambiguous names must remain unselected and explain the missing mapping.
+    page.evaluate('window.qa.open({ambiguous:true})')
+    expect(target).to_have_value('')
+    expect(dialog.get_by_role('checkbox')).to_have_count(0)
+    expect(dialog.get_by_text('尚未找到唯一对应的本地连接，请选择实际目标服务器；系统不会自动选择其他机器。', exact=True)).to_be_visible()
+    target.select_option('cloud')
+    expect(dialog.get_by_role('checkbox')).to_be_visible()
+    # A saved binding overrides a suggestion, but never overrides user selection.
+    page.evaluate("window.qa.open({binding:'other',hasToken:true})")
+    expect(target).to_have_value('other')
+    page.evaluate("window.qa.open({binding:'other',hasToken:true,explicit:'cloud'})")
+    expect(target).to_have_value('cloud')
+    page.evaluate("window.qa.open({binding:'other',hasToken:true,delayInfo:true})")
+    expect(target).to_have_value('cloud')
+    target.select_option('windows')
+    page.evaluate('window.qa.resolveInfo()')
+    expect(target).to_have_value('windows')
+    # Changing target discards an earlier replacement confirmation.
+    page.evaluate('window.qa.open({hasToken:true})')
+    dialog.get_by_role('button', name='安装采集端', exact=True).click()
+    expect(dialog.get_by_role('button', name='确认覆盖并安装', exact=True)).to_be_visible()
+    target.select_option('other')
+    expect(dialog.locator('.monitor-install-replacement')).to_have_count(0)
+    # Account changes close the dialog and discard a late install response.
+    page.evaluate('window.qa.open({hasToken:true,delayInstall:true})')
+    dialog.get_by_role('button', name='安装采集端', exact=True).click()
+    expect(dialog.get_by_role('button', name='正在准备安装…', exact=True)).to_be_disabled()
+    page.evaluate("window.dispatchEvent(new Event('omnidesk:account-changed'))")
+    expect(dialog).to_have_count(0)
+    page.evaluate('window.qa.resolveInstall()')
+    expect(dialog).to_have_count(0)
+    page.evaluate('window.qa.open({hasToken:true})')
+    expect(target).to_have_value('cloud')
+    page.set_viewport_size({'width':520,'height':820})
+    page.screenshot(path=str(area/'linux-reinstall-narrow.png'), full_page=True)
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+    assert not errors, errors
+    browser.close()
+print(json.dumps({'ok':True,'checks':['automatic target matching','separate backend/account rows','explicit replacement and cancellation','unambiguous target only','binding priority','late lookup preserves user selection','target/account changes discard confirmation','sudo challenge, wrong password and retry','password cleared on submit, mode and target change','user installation without sudo','narrow layout'],'artifacts':str(area)}, ensure_ascii=False))

@@ -5,6 +5,7 @@
  * 这里手写声明而不是直接 import preload 的类型，是为了让渲染进程
  * 与 preload 在编译期解耦（构建产物也不互相污染）。
  */
+import type { MonitoringApi } from '@shared/monitoring'
 import type { OfficialAccountApi } from '@shared/account'
 import type { AppUpdateApi } from '@shared/updates'
 import type { RdpLegacyRetryResult } from '@shared/rdp-security'
@@ -29,9 +30,7 @@ import type {
   SharedCredential,
   TransferTask,
   VaultMode,
-  VaultStatus,
-  VpnConnectResult,
-  VpnConnection
+  VaultStatus
 } from '@shared/types'
 
 interface SessionEventPayload {
@@ -116,6 +115,10 @@ export interface OmniDeskApi {
     remove: (id: string) => Promise<IpcResult<boolean>>
     groups: () => Promise<IpcResult<string[]>>
   }
+  docker: {
+    snapshot: (sessionId: string) => Promise<IpcResult<import('@shared/docker').DockerSnapshot>>
+    remove: (sessionId: string, request: import('@shared/docker').DockerRemoveRequest) => Promise<IpcResult<boolean>>
+  }
   ssh: {
     connect: (connectionId: string, cols?: number, rows?: number, ownerId?: string) => Promise<IpcResult<SessionInfo>>
     disconnect: (sessionId: string) => Promise<IpcResult<boolean>>
@@ -161,7 +164,7 @@ export interface OmniDeskApi {
     getError: (sessionId: string) => Promise<IpcResult<string | null>>
     readClipboard: (sessionId: string) => Promise<IpcResult<string>>
     writeClipboard: (sessionId: string, text: string) => Promise<IpcResult<boolean>>
-    clipboardFiles: (sessionId: string, action: 'paste' | 'offer' | 'receive' | 'cancel' | 'cancel-paste') => Promise<IpcResult<boolean | 'remote'>>
+    clipboardFiles: (sessionId: string, action: 'paste' | 'offer' | 'receive' | 'cancel' | 'cancel-paste' | 'sync-text') => Promise<IpcResult<boolean | 'remote'>>
     launchSystemClient: (connectionId: string) => Promise<IpcResult<boolean>>
   }
   proxy: {
@@ -187,15 +190,6 @@ export interface OmniDeskApi {
     remove: (id: string) => Promise<IpcResult<boolean>>
     usage: (id: string) => Promise<IpcResult<number>>
   }
-  /* ---------------------------- 系统 VPN --------------------------- */
-  vpn: {
-    list: () => Promise<IpcResult<VpnConnection[]>>
-    connect: (
-      name: string,
-      credentials?: { username: string; password: string }
-    ) => Promise<IpcResult<VpnConnectResult>>
-    disconnect: (name: string) => Promise<IpcResult<VpnConnectResult>>
-  }
   /* ------------------- XTerminal 配置导入 -------------------- */
   rdo: { scan: () => Promise<IpcResult<ImportScanResult | null>> }
   xt: {
@@ -212,6 +206,7 @@ export interface OmniDeskApi {
     onStatus: (cb: (p: PortForwardStatus) => void) => Unsub
     onError: (cb: (p: { ruleId: string; message: string }) => void) => Unsub
   }
+  monitoring: MonitoringApi
   metrics: {
     probe: (connectionId: string) => Promise<IpcResult<{ latencyMs: number; timestamp: number }>>,
     collect: (sessionId: string, withProcesses?: boolean) => Promise<IpcResult<ServerMetrics>>

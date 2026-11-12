@@ -1,6 +1,9 @@
 import type { CSSProperties } from 'react'
 
 const paths = {
+  grid: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
+  list: 'M8 5h13M8 12h13M8 19h13M3 5h.01M3 12h.01M3 19h.01',
+  activity: 'M3 12h4l3-8 4 16 3-8h4',
   tag: 'M3 3h8l10 10-8 8L3 11V3Zm5 4h.01',
   assistant: 'M5 8h14v12H5zM9 13h.01M15 13h.01M9 17h6M12 8V4m-2 0h4M2 12v4m20-4v4',
   user: 'M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM4 21v-2a8 8 0 0 1 16 0v2',
@@ -23,6 +26,8 @@ const paths = {
   file: 'M5 3h9l5 5v13H5zM14 3v6h5M8 13h8M8 17h6',
   refresh: 'M20 7v5h-5M4 17v-5h5M5 7a8 8 0 0 1 14-2l1 2M4 17l1 2a8 8 0 0 0 14-2',
   copy: 'M8 8h13v13H8zM16 8V3H3v13h5',
+  check: 'm5 12 4 4L19 6',
+  trash: 'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',
   close: 'm6 6 12 12M6 18 18 6',
   shield: 'm12 2 8 4v6c0 5-8 10-8 10S4 17 4 12V6zM8 12l3 3 5-6',
   expand: 'M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5',

@@ -160,6 +160,37 @@ async function main() {
   await stalePreparedFiles
   assert.deepEqual(state.events, [])
   console.log('PASS a remote file copy cancels pending text reads and file preparations without republishing old clipboard contents or sending stale shortcuts')
+  ;({ state, bridge } = fixture({ canPublishText: async () => false }))
+  assert.equal(await bridge.sync(), false, 'focus sync must preserve local files and untouched remote formats')
+  assert.equal(state.published.length, 0)
+  assert.deepEqual(state.events, [])
+  let localTextReady = false
+  ;({ state, bridge } = fixture({ canPublishText: async () => localTextReady }))
+  bridge.receiveFormats()
+  assert.equal(await bridge.sync(), false)
+  localTextReady = true
+  state.local = 'LOCAL COPY AFTER REMOTE FILES'
+  assert.equal(await bridge.sync(), true, 'new local text must unblock focus sync after remote formats')
+  assert.deepEqual(state.published, [state.local])
+  console.log('PASS focus sync respects file/remote clipboard ownership and resumes after a new local text copy')
+  ;({ state, bridge } = fixture())
+  await bridge.sync()
+  bridge.reset()
+  await bridge.sync()
+  assert.equal(state.published.length, 2, 'same local text must be offered to a recovered clipboard channel')
+  ;({ state, bridge } = fixture({ readText: () => new Promise(done => { resolveRead = done }) }))
+  const beforeRecovery = bridge.paste(() => assert.fail('paste started before recovery must be cancelled'))
+  await Promise.resolve()
+  bridge.reset()
+  resolveRead('OLD PRE-RECOVERY READ')
+  await beforeRecovery
+  assert.equal(state.published.length, 0)
+  ;({ state, bridge } = fixture({ canReceive: () => true }))
+  state.active = false
+  assert.equal(await bridge.receive('REMOTE COPY WHILE TOOLBAR HAS FOCUS'), true)
+  assert.equal(state.local, 'REMOTE COPY WHILE TOOLBAR HAS FOCUS')
+  assert.equal(await bridge.sync(), false, 'receive permission must not authorize sending local content')
+  console.log('PASS recovery clears stale text caches and cancels earlier work; toolbar focus can receive without enabling background local reads')
   const factorySource = fs.readFileSync('node_modules/tabby-rdp/vendor/ironrdp-factory.js', 'utf8')
   const factory = await import('data:text/javascript;base64,' + Buffer.from(factorySource).toString('base64'))
   const module = await WebAssembly.compile(fs.readFileSync('node_modules/tabby-rdp/vendor/ironrdp_web_bg.wasm'))

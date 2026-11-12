@@ -323,7 +323,7 @@ async function main() {
         builder.proxyAddress(qaTransport.wsUrl).renderCanvas(canvas).desktopSize(new runtime.DesktopSize(800, 600)).remoteClipboardChangedCallback(remoteClipboardChanged);
         const session = await builder.connect();
         const sessionRef = { current: session };
-        const bridge = rdpClipboard.createRdpClipboard({ canSync, readText: () => readSyntheticText(), writeText: text => writeSyntheticText(text), publishText: async text => { const data = new runtime.ClipboardData(); data.addText('text/plain', text); try { await session.onClipboardPaste(data) } finally { data.free() } }, preparePaste: () => fileClipboardAction('paste'), onError: message => { if (message) throw new Error(message) } });
+        const bridge = rdpClipboard.createRdpClipboard({ canSync, canReceive: () => activeRef.current && document.hasFocus(), canPublishText: async () => await fileClipboardAction('sync-text') === false, readText: () => readSyntheticText(), writeText: text => writeSyntheticText(text), publishText: async text => { const data = new runtime.ClipboardData(); data.addText('text/plain', text); try { await session.onClipboardPaste(data) } finally { data.free() } }, preparePaste: () => fileClipboardAction('paste'), onError: message => { if (message) throw new Error(message) } });
         clipboardBridge = bridge;
         const { scancodeFor, shouldUseUnicode, mouseButtonFor } = rdpInput;
         const rdpDisplaySize = () => { throw new Error('unexpected resize') };
@@ -397,12 +397,22 @@ async function main() {
       const repeatedText = Buffer.from(localText, 'utf16le').toString('hex').match(/.{4}/g).map(value => value.slice(2) + value.slice(0, 2)).join('')
       await until(() => renderer.peer.lines.includes('client-text ' + repeatedText), 'local text payload')
       const uploadsBeforeRepeat = renderer.peer.lines.match(/files-upload-complete/g)?.length ?? 0
-      localPaths = [selected]; localText = ''; sequence++
+      localPaths = [selected]; localText = 'FILE PATH TEXT MUST NOT REPLACE FILE FORMATS'; sequence++
+      const formatsBeforeFileFocus = countFormats()
+      await page.evaluate(() => fixture.bridge.sync(true))
+      assert.equal(countFormats(), formatsBeforeFileFocus, 'focus sync must leave local file formats untouched')
       await page.keyboard.press('Control+v')
       await until(() => (renderer.peer.lines.match(/files-upload-complete/g)?.length ?? 0) > uploadsBeforeRepeat, 'local files following text')
       localPaths = []; localText = 'QA repeated local text'; sequence++
       await page.keyboard.press('Control+v')
       await until(() => renderer.peer.lines.split('client-text ' + repeatedText).length >= 3, 'identical local text republished after files')
+      const offerBeforeLocalFocus = virtualClipboard
+      await page.keyboard.press('F1')
+      await until(() => !!virtualClipboard && virtualClipboard !== offerBeforeLocalFocus, 'remote file offer before a new local text copy')
+      const formatsBeforeLocalFocus = countFormats()
+      localPaths = []; localText = 'NEW LOCAL TEXT ON FOCUS AFTER REMOTE FILES'; sequence++
+      assert.equal(await page.evaluate(() => fixture.bridge.sync()), true)
+      await until(() => countFormats() > formatsBeforeLocalFocus, 'new local text focus sync overrides obsolete remote file ownership')
       await page.keyboard.press('F7')
       await pause(100)
       sequence = service.sessions.get(renderer.transport.sessionId).files.remoteSequence
@@ -424,7 +434,7 @@ async function main() {
       await page.evaluate(async () => { fixture.cleanupRef.current(); fixture.session.shutdown(); await outcome; fixture.builder.free(); fixture.runtime.runtime.dispose() })
       assert.deepEqual(errors, [])
       assert.deepEqual(await page.evaluate(() => clipboardErrors), [])
-      console.log('PASS real DesktopView → native FreeRDP: automatic metadata-only offers and on-demand content, server-only text/files/cached-files/images/cut formats, Ctrl+V/Shift+Insert and right-click/focus ownership, new local copies and text→files→identical text; background guards and text invalidation')
+      console.log('PASS real DesktopView → native FreeRDP: automatic metadata-only offers and on-demand content, local file focus protection and new text overriding remote files, server-only text/files/cached-files/images/cut formats, Ctrl+V/Shift+Insert and right-click/focus ownership, new local copies and text→files→identical text; background guards and text invalidation')
     } finally { await browser.close() }
   } finally {
     for (const client of clients) { service.release(client.transport.sessionId); client.socket?.terminate() }

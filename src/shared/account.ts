@@ -1,10 +1,15 @@
+import type { BackupOptions } from './backup'
 import type { ConfigurationSummary, IpcResult } from './types'
 
 export interface OfficialAccountStatus {
   serverUrl: string
+  serverHistory?: string[]
   user: { id: string; username: string; role: 'admin' | 'user'; gitlab?: { issuer: string; username: string } } | null
   revision: number
   lastSync?: number
+  activeAccountId?: string
+  accounts?: Array<{ id:string; serverUrl:string; user:NonNullable<OfficialAccountStatus['user']>; signedIn:boolean }>
+  restored?: ConfigurationSummary
 }
 
 export interface OfficialUserInfo {
@@ -68,9 +73,12 @@ export interface OfficialAccountApi {
   startGitlab: (mode: 'login' | 'link') => Promise<IpcResult<{ id: string; expiresAt: number }>>
   pollGitlab: (id: string) => Promise<IpcResult<{ state: 'pending' | 'complete'; status?: OfficialAccountStatus }>>
   cancelGitlab: (id: string) => Promise<IpcResult<boolean>>
+  onChanged: (callback:(status:OfficialAccountStatus)=>void)=>()=>void
+  switchAccount: (id:string) => Promise<IpcResult<OfficialAccountStatus>>
+  removeAccount: (id: string) => Promise<IpcResult<OfficialAccountStatus>>
   logout: () => Promise<IpcResult<OfficialAccountStatus>>
-  upload: () => Promise<IpcResult<OfficialAccountStatus>>
-  download: () => Promise<IpcResult<ConfigurationSummary | null>>
+  upload: (options?: BackupOptions) => Promise<IpcResult<OfficialAccountStatus>>
+  download: (options?: BackupOptions) => Promise<IpcResult<ConfigurationSummary | null>>
   shares: (search: string, page: number) => Promise<IpcResult<{ items: OfficialShare[]; total: number }>>
   users: (search: string, page: number) => Promise<IpcResult<OfficialUsers>>
   publish: (connectionId: string) => Promise<IpcResult<{ id: string } | null>>

@@ -1,41 +1,42 @@
 # OmniDesk
 
-Windows 与 Linux 远程连接工作台：集中管理服务器、终端、文件和远程桌面，并在会话内使用 AI 助手。
+连接 Windows 与 Linux 的远程工作台。客户端和监控采集端以 [MIT](LICENSE) 开源。
 
-**[下载 Windows x64 0.6.15](https://github.com/jixn-hu/omnidesk-releases/releases/tag/v0.6.15)** · **[MIT 开源客户端](https://github.com/jixn-hu/omnidesk-source)** · **[同事介绍与上手指南](https://github.com/jixn-hu/omnidesk-source/blob/main/docs/同事介绍/OmniDesk-同事介绍与上手指南.md)**
+## 下载
 
-## 能做什么
+当前版本 **0.6.43**（2026-11-12）：[Windows x64 安装包](https://github.com/jixn-hu/omnidesk-releases/releases/tag/v0.6.43)。安装包未数字签名，请核对 Release 同页的 SHA256SUMS.txt。升级前在「设置 → 备份」导出加密备份，结束会话并退出旧版后安装。
 
-- SSH 终端、SFTP 文件管理、端口转发与 Windows RDP 放在一个工作区。
-- 服务器按文件夹、标签或账号整理，拖拽即可改分类；可显示地址、账号、标签与备注。
-- Linux 文件支持拖入上传、目录间移动与拖出下载；同名文件不会直接覆盖。
-- Windows 远端复制后可直接到本机粘贴，需要内容时自动传输；服务器内部复制继续在服务器完成。
-- AI 助手支持多个对话、权限选择与操作确认；Enter 发送、Ctrl+Enter 换行。
-- 连接资料可加密备份；账号配置同步先合并冲突，再上传。
+[更新说明](docs/RELEASE-0.6.43.md) · [用户指南](docs/USER-GUIDE.md) · [构建指南](docs/BUILDING.md) · [验证范围](docs/VALIDATION-0.6.43.md)
 
-## 界面预览
+## 主要功能
 
-以下截图使用合成数据，功能与实际连接效果以安装版本和服务器环境为准。
+- **SSH / SFTP**：密码、私钥与 SSH Agent；主机密钥确认、多标签终端、搜索、上传下载、远程文件编辑和拖拽。
+- **Windows RDP**：内嵌 FreeRDP，文本和文件剪贴板、代理与证书确认。传输中断只在有效恢复条件下尝试恢复原会话，接管或注销时停止，避免挤掉其他登录用户。
+- **Docker**：Linux SSH 会话右侧「文件」下方的入口，查看和搜索容器、镜像，展开详情并删除资源。运行中的容器需先停止；删除前确认服务器、名称与完整 ID。未安装、无权限或服务不可达分别提示。复用当前 SSH 连接，不开放 Docker 网络端口。
+- **监控**：SSH 会话按需读取系统状态；可选择独立监控后台，安装 Linux / Windows 采集端持续上报。支持批量安装、覆盖安装及上报间隔配置。
+- **连接管理**：目录、标签、备注、公共凭据、代理和多个独立会话。
+- **备份与账号**：「设置 → 备份」管理本地文件、WebDAV 与恢复；侧栏「账号」管理多个自建服务账号及切换。本机 SSH / RDP 不要求登录账号。
+- **AI 与外部调用**：可配置模型进行有权限控制的查询和操作；HTTP API / MCP 复用服务层，敏感操作需确认。
 
-![服务器目录](https://raw.githubusercontent.com/jixn-hu/omnidesk-source/main/docs/同事介绍/images/01-servers.png)
+![Docker 侧栏，使用本地隔离测试数据](docs/images/docker-0.6.43.png)
 
-![Linux 终端与文件](https://raw.githubusercontent.com/jixn-hu/omnidesk-source/main/docs/同事介绍/images/03-ssh-files.png)
+## 构建
 
-![AI 助手](https://raw.githubusercontent.com/jixn-hu/omnidesk-source/main/docs/同事介绍/images/06-ai-assistant.png)
+需要 Node.js 22+、npm、Git 与 Go 1.26+。默认构建会从仓库内 monitor-agent/ 编译 Linux amd64 / arm64 和 Windows x64 采集端，不依赖私有项目目录。
 
-## 安装和上手
+~~~powershell
+git clone https://github.com/jixn-hu/omnidesk-source.git
+cd omnidesk-source
+npm ci
+npm run typecheck
+npm run build
+npm run dev
+~~~
 
-1. 下载 `OmniDesk-0.6.15-win-x64.exe`，用同页 `SHA256SUMS.txt` 核对摘要后运行安装。
-2. 新建 Linux / SSH 或 Windows / RDP 连接，填写服务器地址、端口和凭据。
-3. 在设置选择目录样式和显示信息。Linux 会话使用终端及文件面板；Windows 会话可开启剪贴板重定向。
-4. 使用账号同步时自行配置服务地址，新设备先拉取再上传；升级前导出加密备份并妥善保管密码。
+Windows 原生 FreeRDP 构建和安装包制作还需要 MSYS2 / CMake，见 [构建指南](docs/BUILDING.md) 与 [FreeRDP 说明](docs/FREERDP.md)。
 
-完整步骤与更多截图见上手指南；可下载源码仓库内的 [介绍资料 ZIP](https://github.com/jixn-hu/omnidesk-source/blob/main/docs/OmniDesk-同事介绍资料.zip) 转发给同事。
+## 源码与许可
 
-安装包目前未数字签名。升级前结束会话并退出旧版，再运行安装程序，保留现有用户数据。软件更新只读取正式 Release，下载和安装由用户确认。
+本仓库包含 Electron 客户端、原生辅助源码、监控采集端及安装脚本。账号与监控服务端独立部署，其源码不在本仓库中；客户端服务地址默认留空，由使用者自行配置。第三方依赖的许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-## 开源与验证
-
-客户端以 MIT 开源，构建步骤见 [BUILDING.md](https://github.com/jixn-hu/omnidesk-source/blob/main/docs/BUILDING.md)。账号后台是独立服务，不在本次开源范围内；SSH / RDP 与本机管理可独立使用。依赖许可证见源码仓库的 THIRD_PARTY_NOTICES.md。
-
-本版通过本地类型、构建、SSH/SFTP、FreeRDP 协议、Windows OLE 数据对象和成品结构验证；实际生产 Windows 服务器与资源管理器交互、安装向导及全新 Windows 环境仍需使用环境确认。发布前后附件摘要与匿名下载另行核验，不等同于替用户安装或部署后台。
+问题反馈请附版本、系统和复现步骤，删除日志中的凭据、服务器地址及个人信息。参与开发见 [CONTRIBUTING.md](CONTRIBUTING.md)。
