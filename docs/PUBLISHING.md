@@ -1,20 +1,24 @@
 # OmniDesk 源码与安装包发布
 
-自 0.6.15 起，客户端当前源码以 MIT 许可证发布到 `jixn-hu/omnidesk-source`；下载与客户端更新继续使用 `jixn-hu/omnidesk-releases`。旧开发历史与独立账号后台保留私有。用户于 2026-11-03 授权上传 GitHub 并开源客户端，取代此前仅公开安装包的规则。
+从 0.6.44 起，只维护两个公开的 MIT 仓库：
 
-## 源码
+- [omnidesk](https://github.com/jixn-hu/omnidesk)：PC 客户端源码、版本标签和 Windows 安装包 Releases。
+- [omnidesk-server](https://github.com/jixn-hu/omnidesk-server)：统一后端，部署见 [部署指南](https://github.com/jixn-hu/omnidesk-server/blob/main/docs/DEPLOYMENT.md)。
 
-1. 从当前客户端源码准备独立快照，不复制旧 `.git`、个人资料、生产配置、测试 profile 或生成的二进制。
-2. 纳入必要源码、锁文件、原生辅助源码、构建脚本、MIT 许可证、第三方声明、用户指南及合成截图。历史交接和内部验证文档可保留在私有开发目录。
-3. 对候选文件扫描密钥与地址；只在合成测试中使用保留示例地址，不能把历史真实地址带到公开提交。
-4. 在独立目录验证 `npm ci`、`npm run typecheck` 与 `npm run build`；需要原生工具链的完整打包另行验证。使用公开贡献身份提交，标记 `v0.6.43`。
-5. 审查后公开仓库，匿名验证源码、许可证和文档可访问。账号后台不随客户端源码公开，也不执行后台部署。
+客户端本地目录就是公开源码工作区，不再维护另一份源码副本或独立安装包仓库。内部记录在 `.local/`，个人数据、依赖、构建产物和环境文件不进 Git。
 
-## 安装包
+## 客户端发布
 
-1. 保留旧版本成品及应用升级兼容性；类型、构建、协议、成品结构和隐私验证通过后，核对版本与摘要。
-2. `node tools/prepare-public-release.cjs` 只准备安装 EXE、EXE.blockmap、latest.yml 与 SHA256SUMS.txt 四个附件。便携版留在本地；不上传用户数据或整个 release 目录。
-3. 安装包仓库 Git 树只维护经审查的 README。正式 Release 指向该仓库自己的完整提交 SHA，不引用私有开发提交。
-4. 先建非预发布的草稿，上传附件后验证数量、大小和 GitHub 摘要，再实际下载全部附件，与本地 SHA-256 逐项对比。
-5. 全部匹配后公开草稿并设为 Latest；匿名检查 Latest API、正式版本、安装包下载和开源页面。
-6. 保存发布证据并更新交接记录，向用户提供源码页、Release 页与本地安装包路径。只有实际执行过的网络、安装或服务器验证才能标记通过。
+1. 修改源码，更新 package.json 与锁文件版本，并补充版本说明、验证记录。
+2. 若采集端变化，先在相邻后端仓库修改并验证，再执行 `node tools/sync-monitor-agent.cjs` 更新客户端内置源码。用 `--check` 检查两边是否一致。
+3. 运行类型检查、更新逻辑检查、相关测试及生产构建。打包前完成所需原生运行库构建。
+4. 执行 `npx electron-builder --win --x64 --publish never`、`node tools/verify-release.cjs`、`node tools/prepare-public-release.cjs`。
+5. 审查 Git 差异与敏感信息，提交并推送源码，创建对应版本标签。Release 必须指向该版本的源码提交。
+6. 在 `jixn-hu/omnidesk` 创建草稿，上传 `release/<版本>/public/` 的安装包、blockmap、latest.yml、SHA256SUMS.txt 四个附件。便携版保留本地。
+7. 执行 `node tools/verify-github-release.cjs` 校验草稿；通过后公开为正式 Release，再用 `--published` 验证匿名更新接口与安装包下载。
+
+`src/shared/updates.ts`、package.json 的 build.publish 和验证脚本必须一致指向 `jixn-hu/omnidesk`。
+
+## 旧版本迁移
+
+旧公开安装包保留在本仓库的历史 Releases。0.6.43 及以前的已安装 EXE 内置旧更新地址；旧仓库清理后，请手动下载并安装 0.6.44 或更高版本，之后使用新的检查更新地址。既有用户数据与自建后端地址不受目录整理影响。

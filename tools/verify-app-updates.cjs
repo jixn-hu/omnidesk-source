@@ -16,7 +16,7 @@ const fixture = (fetcher, version = '0.5.0', location = fs.mkdtempSync(path.join
 async function main() {
   const publishing = require('../package.json').build.publish
   assert.equal(publishing.provider, 'github')
-  assert.equal(`${publishing.owner}/${publishing.repo}`, 'jixn-hu/omnidesk-releases')
+  assert.equal(`${publishing.owner}/${publishing.repo}`, 'jixn-hu/omnidesk')
   assert.equal(publishing.releaseType, 'draft')
   for (const [left, right, expected] of [['1.10.0', '1.2.0', 1], ['v1.2.3', '1.2.3', 0], ['1.2.3+one', '1.2.3+two', 0], ['1.2.3', '1.2.3-rc.2', 1], ['1.2.3-rc.10', '1.2.3-rc.2', 1], ['1.2.3-alpha', '1.2.3-alpha.1', -1], ['1.2.3-2', '1.2.3-beta', -1], ['1.0.0', '2.0.0', -1]]) assert.equal(compareVersions(left, right), expected)
   for (const version of ['1.2', '01.2.3', '1.2.3-01', '../1.2.3', '1.2.3/' ]) assert.throws(() => compareVersions(version, '0.5.0'))
@@ -24,7 +24,7 @@ async function main() {
   let mode = 'new'
   const { service, location } = fixture(async (url, options) => {
     requests++
-    assert.equal(url, 'https://api.github.com/repos/jixn-hu/omnidesk-releases/releases/latest')
+    assert.equal(url, 'https://api.github.com/repos/jixn-hu/omnidesk/releases/latest')
     assert.equal(options.redirect, 'error')
     assert.equal(options.credentials, 'omit')
     assert(!Object.keys(options.headers).some(key => key.toLowerCase() === 'authorization'))
@@ -36,7 +36,7 @@ async function main() {
   assert.equal(service.check(), first)
   let status = await first
   assert(status.available && !status.error && !status.checking)
-  assert.equal(status.release.url, 'https://github.com/jixn-hu/omnidesk-releases/releases/tag/v0.6.0%2Bbuild.1')
+  assert.equal(status.release.url, 'https://github.com/jixn-hu/omnidesk/releases/tag/v0.6.0%2Bbuild.1')
   assert.equal(service.releaseUrl(), status.release.url)
   status.release.url = 'https://tampered.invalid'
   assert(!service.status().release.url.includes('tampered'))
@@ -84,12 +84,12 @@ async function main() {
   console.log('PASS private/404, rate limit, HTTP/TLS/network, malformed JSON, drafts/prereleases, oversize, invalid versions/dates never report latest; downgrade ignored and release notes bounded')
   const tamperedLocation = fs.mkdtempSync(path.join(directory, 'cache-'))
   fs.writeFileSync(path.join(tamperedLocation, 'app-updates.json'), JSON.stringify({ release: { ...payload(), url: 'https://attacker.invalid' } }))
-  assert.equal(fixture(async () => response(payload()), '0.5.0', tamperedLocation).service.releaseUrl(), 'https://github.com/jixn-hu/omnidesk-releases/releases/tag/v0.6.0')
+  assert.equal(fixture(async () => response(payload()), '0.5.0', tamperedLocation).service.releaseUrl(), 'https://github.com/jixn-hu/omnidesk/releases/tag/v0.6.0')
   const legacyLocation = fs.mkdtempSync(path.join(directory, 'legacy-source-'))
-  fs.writeFileSync(path.join(legacyLocation, 'app-updates.json'), JSON.stringify({ autoCheck: false, release: { ...payload(), html_url: 'https://github.com/jixn-hu/omnidesk/releases/tag/v0.6.0' } }))
+  fs.writeFileSync(path.join(legacyLocation, 'app-updates.json'), JSON.stringify({ autoCheck: false, release: { ...payload(), html_url: 'https://github.com/jixn-hu/omnidesk-releases/releases/tag/v0.6.0' } }))
   const migrated = fixture(async () => { throw new Error('unexpected fetch') }, '0.5.0', legacyLocation).service
   assert.equal(migrated.status().autoCheck, false)
-  assert.equal(migrated.releaseUrl(), 'https://github.com/jixn-hu/omnidesk-releases/releases/tag/v0.6.0')
+  assert.equal(migrated.releaseUrl(), 'https://github.com/jixn-hu/omnidesk/releases/tag/v0.6.0')
   console.log('PASS public distribution source and packaging metadata agree; old cached source URLs are replaced without changing auto-check preference')
   let abortObserved = false
   const stopped = fixture((_url, options) => new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => { abortObserved = true; reject(new Error('abort')) }))).service

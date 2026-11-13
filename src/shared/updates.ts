@@ -1,6 +1,8 @@
 import type { IpcResult } from './types'
 
-export const APP_UPDATE_REPOSITORY = 'jixn-hu/omnidesk-releases'
+export const APP_UPDATE_REPOSITORY = 'jixn-hu/omnidesk'
+export const APP_SOURCE_URL = 'https://github.com/' + APP_UPDATE_REPOSITORY
+export const SERVER_SOURCE_URL = 'https://github.com/jixn-hu/omnidesk-server'
 
 export interface AppRelease {
   tag: string

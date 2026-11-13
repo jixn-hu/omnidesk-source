@@ -3,6 +3,7 @@ import { useApp } from '../../store/app'
 import type { VaultMode } from '@shared/types'
 import ConfigurationSync from './ConfigurationSync'
 import SoftwareUpdates from './SoftwareUpdates'
+import OpenSourceLinks from './OpenSourceLinks'
 import AppearanceSettings from './AppearanceSettings'
 import AiSettings from '../ai/AiSettings'
 import SettingsSection from './SettingsSection'
@@ -152,6 +153,7 @@ export default function SettingsView() {
             <div className="card-desc" style={{ marginBottom: 12 }}>
               连接 Windows 与 Linux，并把能力开放给 AI 与其他系统
             </div>
+            <OpenSourceLinks />
             {info && (
               <table className="table">
                 <tbody>

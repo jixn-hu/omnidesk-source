@@ -1,6 +1,6 @@
 {
   "name": "omnidesk",
-  "version": "0.6.43",
+  "version": "0.6.44",
   "description": "远程控制工作台 —— 连接 Windows / Linux，并对 AI 与外部系统开放能力",
   "main": "./out/main/index.js",
   "author": "OmniDesk",
@@ -55,7 +55,7 @@
     "publish": {
       "provider": "github",
       "owner": "jixn-hu",
-      "repo": "omnidesk-releases",
+      "repo": "omnidesk",
       "releaseType": "draft"
     },
     "directories": {

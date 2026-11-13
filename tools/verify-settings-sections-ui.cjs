@@ -5,7 +5,7 @@ const { _electron } = require('playwright')
 const root = path.resolve(__dirname, '..')
 const version = require('../package.json').version
 const directory = fs.mkdtempSync(path.join(root, 'tmp/settings-sections-ui-'))
-const sectionIds = ['appearance', 'ai', 'monitoring', 'backup', 'updates', 'security', 'shortcuts', 'about']
+const sectionIds = ['appearance', 'ai', 'backup', 'updates', 'security', 'shortcuts', 'about']
 const errors = []
 let application, page
 const section = id => page.locator(`[data-settings-section="${id}"]`)
@@ -39,7 +39,7 @@ async function screenshot(name) {
 }
 async function updateFixture(releaseVersion) {
   await application.evaluate(({ ipcMain, BrowserWindow }, { version, releaseVersion }) => {
-    const status = { currentVersion: version, autoCheck: false, checking: false, available: true, release: { tag: 'v' + releaseVersion, version: releaseVersion, name: 'QA update', notes: 'Synthetic release', publishedAt: '2026-11-02T00:00:00Z', url: 'https://github.com/jixn-hu/omnidesk-releases/releases/tag/v' + releaseVersion } }
+    const status = { currentVersion: version, autoCheck: false, checking: false, available: true, release: { tag: 'v' + releaseVersion, version: releaseVersion, name: 'QA update', notes: 'Synthetic release', publishedAt: '2026-11-02T00:00:00Z', url: 'https://github.com/jixn-hu/omnidesk/releases/tag/v' + releaseVersion } }
     ipcMain.removeHandler('updates:status')
     ipcMain.handle('updates:status', () => ({ ok: true, data: status }))
     ipcMain.removeHandler('updates:check')
@@ -74,6 +74,25 @@ async function main() {
   await noOverflow()
   await screenshot('01-default-collapsed.png')
   console.log(`PASS ${sectionIds.length} collapsed groups by default, duplicate credential shortcut removed, compact overview`)
+
+  await application.evaluate(({ shell }) => { globalThis.__openedProjectLinks = []; shell.openExternal = async url => { globalThis.__openedProjectLinks.push(url) } })
+  for (const id of ['about', 'updates']) {
+    await toggle(id, true)
+    const links = section(id).getByRole('link')
+    assert.equal(await links.count(), 2)
+    assert.equal(await links.nth(0).getAttribute('href'), 'https://github.com/jixn-hu/omnidesk')
+    assert.equal(await links.nth(1).getAttribute('href'), 'https://github.com/jixn-hu/omnidesk-server')
+    await links.nth(0).click(); await links.nth(1).click()
+    await screenshot('project-links-' + id + '.png')
+    await toggle(id, false)
+  }
+  await page.waitForFunction(() => true)
+  assert.deepEqual(await application.evaluate(() => globalThis.__openedProjectLinks), [
+    'https://github.com/jixn-hu/omnidesk', 'https://github.com/jixn-hu/omnidesk-server',
+    'https://github.com/jixn-hu/omnidesk', 'https://github.com/jixn-hu/omnidesk-server'
+  ])
+  console.log('PASS About and Software Updates open both public projects in the external browser')
+
 
   await page.locator('.sidebar-footer').getByRole('button', { name: /^公共凭据/ }).click()
   await page.getByRole('heading', { name: '公共凭据', exact: true }).waitFor()

@@ -19,11 +19,11 @@ async function main() {
   assert(!entries.some(name => /^(?:out\/native|src|native|official-server|tmp)(?:\/|$)|\.(?:rdo|odbackup|odmonitor|pem|pfx)$|(?:^|\/)(?:vault\.enc|vault-key\.json|connections\.json|shared-credentials\.json|webdav-sync\.json|monitoring\.json|backup-preferences\.json|ai-settings\.json|ai-conversations\.enc|official-account\.json|known-hosts\.json|rdp-legacy-consent\.json)$/.test(name)))
   assert.equal(JSON.parse(asar.extractFile(archive, 'package.json').toString()).version, version)
   const publishing = require('../package.json').build.publish
-  assert.equal(`${publishing.owner}/${publishing.repo}`, 'jixn-hu/omnidesk-releases')
-  assert(asar.extractFile(archive, path.join('out', 'main', 'index.js')).toString().includes('jixn-hu/omnidesk-releases'))
+  assert.equal(`${publishing.owner}/${publishing.repo}`, 'jixn-hu/omnidesk')
+  assert(asar.extractFile(archive, path.join('out', 'main', 'index.js')).toString().includes('jixn-hu/omnidesk'))
   const updateConfiguration = fs.readFileSync(path.join(release, 'win-unpacked/resources/app-update.yml'), 'utf8')
   assert.match(updateConfiguration, /^owner: jixn-hu\r?$/m)
-  assert.match(updateConfiguration, /^repo: omnidesk-releases\r?$/m)
+  assert.match(updateConfiguration, /^repo: omnidesk\r?$/m)
   assert.match(updateConfiguration, /^releaseType: draft\r?$/m)
   assert.equal(require('../package-lock.json').version, version)
   let compared = 0

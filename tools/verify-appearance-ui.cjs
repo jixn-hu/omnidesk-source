@@ -102,7 +102,7 @@ async function main() {
   await settings(page)
   if (await page.locator('[data-settings-section="updates"]').getAttribute('open') === null) await page.locator('[data-settings-section="updates"] > summary').click()
   const updateSource = await page.getByRole('region', { name: '软件更新', exact: true }).innerText()
-  assert(!updateSource.includes('jixn-hu/omnidesk-releases'))
+  assert(!updateSource.includes('jixn-hu/omnidesk'))
   assert(!updateSource.includes('需公开仓库'))
   assert.equal(await page.getByLabel('SSH 终端字号', { exact: true }).inputValue(), '17')
   assert.equal(await page.getByRole('button', { name: '深色', exact: true }).getAttribute('aria-pressed'), 'true')

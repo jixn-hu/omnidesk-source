@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { AppUpdateStatus } from '@shared/updates'
 import { useApp } from '../../store/app'
 import Icon from '../../components/Icon'
+import OpenSourceLinks from './OpenSourceLinks'
 import { revealSettingsSection } from './SettingsSection'
 
 function useUpdateStatus() {
@@ -37,6 +38,7 @@ export default function SoftwareUpdates({ embedded = false }: { embedded?: boole
     {(error || status?.error) && <div className="alert alert-warning" role="alert">{error || status?.error}</div>}
     {status?.available && status.release && <div className="software-update-release"><strong>{status.release.name || 'OmniDesk ' + status.release.version}</strong><span>{new Date(status.release.publishedAt).toLocaleDateString()}</span>{status.release.notes && <details><summary>查看更新说明</summary><pre>{status.release.notes}</pre></details>}</div>}
     <div className="software-update-actions"><button className="btn" disabled={!status || status.checking || saving} onClick={() => void operate(() => window.omnidesk.updates.check())}>{status?.checking ? '正在检查…' : '检查更新'}</button>{status?.available && <button className="btn btn-primary" disabled={saving} onClick={() => void operate(() => window.omnidesk.updates.openRelease())}>前往 GitHub 下载新版 ↗</button>}</div>
+    <OpenSourceLinks />
   </section>
 }
 

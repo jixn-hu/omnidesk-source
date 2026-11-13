@@ -4,9 +4,16 @@
 
 ## 下载
 
-当前版本 **0.6.43**（2026-11-12）：[Windows x64 安装包](https://github.com/jixn-hu/omnidesk-releases/releases/tag/v0.6.43)。安装包未数字签名，请核对 Release 同页的 SHA256SUMS.txt。升级前在「设置 → 备份」导出加密备份，结束会话并退出旧版后安装。
+当前版本 **0.6.44**（2026-11-13）：[Windows x64 安装包](https://github.com/jixn-hu/omnidesk/releases/tag/v0.6.44)。安装包未数字签名，请核对 Release 同页的 SHA256SUMS.txt。升级前在「设置 → 备份」导出加密备份，结束会话并退出旧版后安装。
 
-[更新说明](docs/RELEASE-0.6.43.md) · [用户指南](docs/USER-GUIDE.md) · [构建指南](docs/BUILDING.md) · [验证范围](docs/VALIDATION-0.6.43.md)
+[更新说明](docs/RELEASE-0.6.44.md) · [用户指南](docs/USER-GUIDE.md) · [构建指南](docs/BUILDING.md) · [验证范围](docs/VALIDATION-0.6.44.md)
+
+## 配套后端
+
+- [客户端源码与 Windows 下载](https://github.com/jixn-hu/omnidesk)：本仓库，安装包位于 Releases。
+- [统一后端源码与部署](https://github.com/jixn-hu/omnidesk-server)：账号、配置同步、共享服务器、管理后台、监控服务与采集端，MIT 开源。
+- 仅使用 SSH / RDP 无需部署后端；使用云端功能时，按后端部署指南配置一个 HTTPS 地址，然后在客户端“账号”中登录。
+- PC“设置 → 关于”和“设置 → 软件更新”均提供这两个开源仓库入口。
 
 ## 主要功能
 
@@ -18,15 +25,15 @@
 - **备份与账号**：「设置 → 备份」管理本地文件、WebDAV 与恢复；侧栏「账号」管理多个自建服务账号及切换。本机 SSH / RDP 不要求登录账号。
 - **AI 与外部调用**：可配置模型进行有权限控制的查询和操作；HTTP API / MCP 复用服务层，敏感操作需确认。
 
-![Docker 侧栏，使用本地隔离测试数据](docs/images/docker-0.6.43.png)
+![Docker 侧栏，使用本地隔离测试数据](docs/images/docker-0.6.44.png)
 
 ## 构建
 
 需要 Node.js 22+、npm、Git 与 Go 1.26+。默认构建会从仓库内 monitor-agent/ 编译 Linux amd64 / arm64 和 Windows x64 采集端，不依赖私有项目目录。
 
 ~~~powershell
-git clone https://github.com/jixn-hu/omnidesk-source.git
-cd omnidesk-source
+git clone https://github.com/jixn-hu/omnidesk.git
+cd omnidesk
 npm ci
 npm run typecheck
 npm run build
@@ -37,6 +44,6 @@ Windows 原生 FreeRDP 构建和安装包制作还需要 MSYS2 / CMake，见 [�
 
 ## 源码与许可
 
-本仓库包含 Electron 客户端、原生辅助源码、监控采集端及安装脚本。账号与监控服务端独立部署，其源码不在本仓库中；客户端服务地址默认留空，由使用者自行配置。第三方依赖的许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+本仓库包含 Electron 客户端、原生辅助源码、监控采集端及安装脚本。账号与监控服务端统一开源于 [omnidesk-server](https://github.com/jixn-hu/omnidesk-server)，按其 [部署指南](https://github.com/jixn-hu/omnidesk-server/blob/main/docs/DEPLOYMENT.md) 即可自建。客户端服务地址默认留空，由使用者自行配置。第三方依赖的许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 问题反馈请附版本、系统和复现步骤，删除日志中的凭据、服务器地址及个人信息。参与开发见 [CONTRIBUTING.md](CONTRIBUTING.md)。

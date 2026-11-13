@@ -33,4 +33,4 @@ README 和同事上手指南更新为新用法，并包含 9 张演示截图。�
 
 ## 开源
 
-客户端源码以 MIT 许可证公开：[omnidesk-source](https://github.com/jixn-hu/omnidesk-source)。包含构建说明、使用指南与演示截图。独立账号后台不包含在此次客户端源码发布中。
+客户端源码以 MIT 许可证公开：[omnidesk-source](https://github.com/jixn-hu/omnidesk)。包含构建说明、使用指南与演示截图。独立账号后台不包含在此次客户端源码发布中。

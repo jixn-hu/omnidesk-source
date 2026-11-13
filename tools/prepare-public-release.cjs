@@ -5,7 +5,7 @@ const crypto = require('node:crypto')
 const configuration = require('../package.json')
 const { version } = configuration
 assert.match(version, /^\d+\.\d+\.\d+$/)
-assert.equal(`${configuration.build.publish.owner}/${configuration.build.publish.repo}`, 'jixn-hu/omnidesk-releases')
+assert.equal(`${configuration.build.publish.owner}/${configuration.build.publish.repo}`, 'jixn-hu/omnidesk')
 const directory = path.resolve(__dirname, '..', 'release', version)
 const destination = path.join(directory, 'public')
 const installer = `OmniDesk-${version}-win-x64.exe`

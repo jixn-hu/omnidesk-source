@@ -13,10 +13,10 @@ const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
 
 async function main() {
   assert.match(version, /^\d+\.\d+\.\d+$/)
-  assert.equal(repository, 'jixn-hu/omnidesk-releases')
+  assert.equal(repository, 'jixn-hu/omnidesk')
   assert.equal(api(`repos/${repository}`).private, false)
-  for (const source of ['jixn-hu/omnidesk', 'jixn-hu/omnidesk-server']) assert.equal(api(`repos/${source}`).private, true, `${source} must remain private`)
-  const sourceRepository = 'jixn-hu/omnidesk-source'
+  assert.equal(api('repos/jixn-hu/omnidesk-server').private, false, 'Unified backend must be public')
+  const sourceRepository = repository
   assert.equal(api(`repos/${sourceRepository}`).private, false, 'Audited client source must be public')
   const sourcePackage = api(`repos/${sourceRepository}/contents/package.json?ref=${tag}`)
   const sourceConfiguration = JSON.parse(Buffer.from(sourcePackage.content, 'base64').toString('utf8'))
@@ -37,7 +37,10 @@ async function main() {
   const commit = api(`repos/${repository}/commits/${release.target_commitish}`)
   const tree = api(`repos/${repository}/git/trees/${commit.commit.tree.sha}?recursive=1`)
   assert.equal(tree.truncated, false)
-  assert.deepEqual(tree.tree.map(entry => entry.path).sort(), ['README.md'], 'Installer repository must contain only the reviewed README')
+  assert.equal(api(`repos/${repository}/commits/${tag}`).sha, commit.sha, 'Release must reference its source tag')
+  assert(tree.tree.some(entry => entry.path === 'src/shared/updates.ts'))
+  assert(tree.tree.some(entry => entry.path === 'LICENSE'))
+  assert(!tree.tree.some(entry => /^(?:\.local|node_modules|out|release|official-data)\//.test(entry.path)))
   const directory = path.resolve(__dirname, '..', 'release', version, 'public')
   const installer = `OmniDesk-${version}-win-x64.exe`
   const artifacts = [installer, `${installer}.blockmap`, 'latest.yml'].sort()
@@ -64,9 +67,9 @@ async function main() {
     const download = release.assets.find(asset => asset.name === installer)
     const downloadStatus = execFileSync(process.platform === 'win32' ? 'curl.exe' : 'curl', ['--disable', '--head', '--location', '--fail', '--silent', '--show-error', '--proto', '=https', '--proto-redir', '=https', '--connect-timeout', '10', '--max-time', '30', '--output', process.platform === 'win32' ? 'NUL' : '/dev/null', '--write-out', '%{http_code}', download.browser_download_url], { encoding: 'utf8' }).trim()
     assert.equal(downloadStatus, '200', 'Anonymous installer download must work')
-    console.log('PASS anonymous latest release and installer download; tag belongs to the public README-only repository')
+    console.log('PASS anonymous latest release and installer download; tag belongs to the public client source repository')
   }
-  console.log(`PASS ${repository} ${tag}: ${published ? 'published' : 'draft'}; client source public; development history and account backend private; all four public assets verified`)
+  console.log(`PASS ${repository} ${tag}: ${published ? 'published' : 'draft'}; client and unified backend public; private development history excluded; all four public assets verified`)
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1 })

@@ -65,3 +65,9 @@ id_ed25519*
 
 ai-conversations.enc
 ai-conversations.enc.tmp
+
+.local/
+
+__pycache__/
+
+*.pyc

@@ -4,7 +4,7 @@
 
 ## 安装与连接
 
-从 [Windows 安装包 Release](https://github.com/jixn-hu/omnidesk-releases/releases/tag/v0.6.43) 下载安装程序，核对 SHA256SUMS.txt。安装包未签名。升级前导出加密备份并保存密码，结束会话、退出旧版后安装。
+从 [Windows 安装包 Release](https://github.com/jixn-hu/omnidesk/releases/tag/v0.6.43) 下载安装程序，核对 SHA256SUMS.txt。安装包未签名。升级前导出加密备份并保存密码，结束会话、退出旧版后安装。
 
 首次启动选择本机凭据保护方式。无需注册账号即可建立 SSH / RDP 连接、管理公共凭据和备份。新建服务器时选择协议，填写地址、端口、用户名及密码或私钥；首次 SSH 连接核对主机指纹，Windows 连接按提示核对证书和安全模式。
 
