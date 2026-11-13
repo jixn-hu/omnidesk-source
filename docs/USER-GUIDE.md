@@ -4,7 +4,7 @@
 
 ## 安装与连接
 
-从 [Windows 安装包 Release](https://github.com/jixn-hu/omnidesk/releases/tag/v0.6.43) 下载安装程序，核对 SHA256SUMS.txt。安装包未签名。升级前导出加密备份并保存密码，结束会话、退出旧版后安装。
+从 [Windows 安装包 Release](https://github.com/jixn-hu/omnidesk/releases/latest) 下载安装程序，核对 SHA256SUMS.txt。安装包未签名。升级前导出加密备份并保存密码，结束会话、退出旧版后安装。
 
 首次启动选择本机凭据保护方式。无需注册账号即可建立 SSH / RDP 连接、管理公共凭据和备份。新建服务器时选择协议，填写地址、端口、用户名及密码或私钥；首次 SSH 连接核对主机指纹，Windows 连接按提示核对证书和安全模式。
 
@@ -30,3 +30,7 @@ Docker 分为「容器」「镜像」，可搜索、刷新和展开详情。容�
 不同自建服务独立管理自己的账号和监控数据。安装采集端时核对上报服务和节点；可以批量安装或覆盖安装。默认每 60 秒采集上报一次，可按节点配置间隔。Windows 手动安装时在目标机执行界面生成的命令；命令有有效期，有效期内可重试下载，使用「生成并复制新命令」更新剪贴板。
 
 SSH / RDP 的连通性检查仅表示端口或协议可达，不能证明账号认证成功。服务端部署与权限由管理员配置。反馈问题时请先清理日志和截图中的个人信息。
+
+## 查看源码与自建后端
+
+PC“设置 → 关于”和“设置 → 软件更新”均可打开 [客户端源码与下载](https://github.com/jixn-hu/omnidesk)、[统一后端源码](https://github.com/jixn-hu/omnidesk-server)。自建服务按 [后端部署指南](https://github.com/jixn-hu/omnidesk-server/blob/main/docs/DEPLOYMENT.md) 操作，在 PC 的“账号”填入最终 HTTPS 地址并登录。
