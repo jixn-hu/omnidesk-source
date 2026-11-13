@@ -11,3 +11,10 @@
 - 统一后端 go test ./...、go vet ./... 通过；Node.js 47 项测试通过、0 跳过，包括实际 Windows Agent 通过统一入口上报。地址脱敏调整后 GitLab 专项及统一入口专项再次通过。
 
 本次没有连接或重新部署用户生产后端。Windows 安装包未数字签名。历史仓库与安装包迁移结果以 GitHub Release、发布验证脚本及后端 CI 记录为准；原本地开发记录、数据和旧 Git 历史保留在忽略目录或外部备份，不随开源发布。
+
+## GitHub 与成品更新检查
+
+- [客户端 0.6.44 正式发布](https://github.com/jixn-hu/omnidesk/releases/tag/v0.6.44) 已核对四个附件的大小和 GitHub SHA-256，与本地发布目录一致。Release 指向 v0.6.44 客户端源码提交。
+- 匿名 Latest API 和安装包下载检查通过，不需要 GitHub Token。
+- 在实际 0.6.44 成品 EXE 中点击“检查更新”，读取到新仓库的 0.6.44 正式版本，版本链接正确，当前无可用升级且无错误。
+- [统一后端 0.6.44](https://github.com/jixn-hu/omnidesk-server/releases/tag/v0.6.44) 已公开。[Docker 独立构建与启动验证](https://github.com/jixn-hu/omnidesk-server/actions/runs/43351578449) 通过。
